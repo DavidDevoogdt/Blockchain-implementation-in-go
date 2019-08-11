@@ -6,10 +6,12 @@ import (
 
 // BlockChain is keeps track of known heads of tree
 type BlockChain struct {
-	Head                      *BlockChainNode
-	allBlocksChainNodes       map[[32]byte]*BlockChainNode
-	OtherHeadBlocksChainNodes map[[32]byte]*BlockChainNode
-	Miner                     *Miner
+	Head                         *BlockChainNode
+	allBlocksChainNodes          map[[32]byte]*BlockChainNode
+	OtherHeadBlocksChainNodes    map[[32]byte]*BlockChainNode
+	OrphanedHeadBlocksChainNodes map[[32]byte]*BlockChainNode
+	OrphanedRootBlocksChainNodes map[[32]byte]*BlockChainNode
+	Miner                        *Miner
 }
 
 // BlockChainNode links block to previous parent
@@ -91,6 +93,8 @@ func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 	bc := new(BlockChain)
 	bc.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
 	bc.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	bc.OrphanedHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	bc.OrphanedRootBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
 
 	genesisMiner := CreateGenesisMiner("genesis", broadcaster, bc)
 	bc.Miner = genesisMiner
@@ -164,6 +168,8 @@ func DeSerializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 	blockChain := new(BlockChain)
 	blockChain.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
 	blockChain.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.OrphanedHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.OrphanedRootBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
 
 	nBlock1 := deSerialize(bc[0])
 

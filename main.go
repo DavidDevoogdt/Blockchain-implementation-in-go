@@ -15,6 +15,10 @@ func main() {
 	Miners := make([]*Miner, NumberOfMiners)
 
 	Miners[0] = BlockChainGenesis(3, broadcaster)
+
+	k := Miners[0].BlockChain.Head.Block.serialize()
+	fmt.Printf("%s", k)
+
 	blc := Miners[0].MineBlock("genblock1")
 
 	Miners[0].BlockChain.addBlockChainNode(blc)

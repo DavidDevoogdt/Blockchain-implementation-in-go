@@ -52,6 +52,22 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	return m
 }
 
+/*
+func MinerFromScratch() *BlockChain {
+	blockChain := new(BlockChain)
+	blockChain.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.OrphanedHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.OrphanedRootBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+
+
+
+
+	return m
+
+}
+*/
+
 // CreateGenesisMiner used for first miners
 func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *BlockChain) *Miner {
 

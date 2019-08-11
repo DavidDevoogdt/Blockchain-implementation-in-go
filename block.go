@@ -22,6 +22,8 @@ type Block struct {
 	Owner      [8]byte
 }
 
+
+
 // 5*32+8 = 168
 
 func (b *Block) preHash() [BlockSize]byte {
