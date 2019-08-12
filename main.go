@@ -6,18 +6,16 @@ import (
 )
 
 // NumberOfMiners is local number of threads competing
-const NumberOfMiners = 5
 
 func main() {
+
+	NumberOfMiners := 5
 
 	broadcaster := NewBroadcaster("receive Channel")
 
 	Miners := make([]*Miner, NumberOfMiners)
 
 	Miners[0] = BlockChainGenesis(3, broadcaster)
-
-	k := Miners[0].BlockChain.Head.Block.serialize()
-	fmt.Printf("%s", k)
 
 	blc := Miners[0].MineBlock("genblock1")
 
@@ -33,17 +31,50 @@ func main() {
 		go Miners[i].MineContiniously()
 	}
 
-	End := time.Tick(20000 * time.Millisecond)
+	InsertMiner := time.After(10000 * time.Millisecond)
+
+	go func() {
+		<-InsertMiner
+		m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
+
+		Miners = append(Miners, m)
+
+		go m.MineContiniously()
+		NumberOfMiners++
+	}()
+
+	End := time.Tick(5000 * time.Millisecond)
 
 	for {
 		<-End
 		fmt.Printf("##########################################################################")
 		Miners[0].Print()
-		for i := 1; i < 5; i++ {
+		for i := 1; i < NumberOfMiners; i++ {
 			Miners[i].PrintHash()
 		}
 		fmt.Printf("##########################################################################")
 
 	}
+
+	/*
+		go Miners[0].MineContiniously()
+
+		Wait := time.After(5000 * time.Millisecond)
+		<-Wait
+
+
+		Miners[1] = MinerFromScratch("David", broadcaster)
+		go Miners[1].MineContiniously()
+
+		End := time.Tick(5000 * time.Millisecond)
+
+		for {
+			<-End
+			fmt.Printf("##########################################################################")
+			Miners[0].Print()
+			Miners[1].Print()
+
+		}
+	*/
 
 }

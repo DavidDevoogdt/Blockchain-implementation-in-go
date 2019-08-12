@@ -36,7 +36,9 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 
 	m.PrivateKey = PrivateKeyToBytes(priv)
 	m.PublicKey = PublicKeyToBytes(pub)
+
 	m.BlockChain = DeSerializeBlockChain(blockChain)
+
 	m.Broadcaster = Broadcaster
 
 	m.ReceiveChannel = make(chan [BlockSize]byte)
@@ -52,21 +54,12 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	return m
 }
 
-/*
-func MinerFromScratch() *BlockChain {
-	blockChain := new(BlockChain)
-	blockChain.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OrphanedHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OrphanedRootBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-
-
-
-
+// MinerFromScratch ask for own resources for generation of blockchain
+func MinerFromScratch(name string, broadcaster *Broadcaster) *Miner {
+	m := CreateMiner(name, broadcaster, make([][BlockSize]byte, 0))
+	//go m.IntRequestBlock(1)
 	return m
-
 }
-*/
 
 // CreateGenesisMiner used for first miners
 func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *BlockChain) *Miner {
@@ -98,24 +91,32 @@ func (m *Miner) ReceiveBlocks() {
 	for {
 		a := <-m.ReceiveChannel
 		bl := deSerialize(a)
-		fmt.Printf("miner %s reciever request to add %.10x\n", m.Name, a)
+		fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
 
-		m.interrupt <- true
+		if m.BlockChain.addBlockChainNode(bl) {
+			m.interrupt <- true
+		}
 
-		m.BlockChain.addBlockChainNode(bl)
 	}
 }
+
 func (m *Miner) intRequests() {
 	for {
 		a := <-m.IntRequestChannel
-		fmt.Printf("%s received request for block %d\n", m.Name, a.Height)
+		bl := m.BlockChain.GetBlockAtHeight(a.Height)
+		if bl != nil {
+			a.requester <- bl.serialize()
+		}
 	}
 }
 
 func (m *Miner) hashRequests() {
 	for {
 		a := <-m.HashRequestChannel
-		fmt.Printf("%s received request for block %x\n", m.Name, a.Hash)
+		b := m.BlockChain.GetBlockAtHash(a.Hash)
+		if b != nil {
+			a.requester <- b.serialize()
+		}
 	}
 }
 
@@ -127,6 +128,11 @@ func (m *Miner) BroadcastBlock(block0 *Block) {
 // IntRequestBlock let miner request block with specific number
 func (m *Miner) IntRequestBlock(number uint32) {
 	m.Broadcaster.IntRequestBlock(NewIntRequest(number, m.ReceiveChannel))
+}
+
+// HashRequestBlock let miner request block with specific number
+func (m *Miner) HashRequestBlock(hash [32]byte) {
+	m.Broadcaster.HashRequestBlock(NewHashRequest(hash, m.ReceiveChannel))
 }
 
 // MineBlock mines block and add own credentials

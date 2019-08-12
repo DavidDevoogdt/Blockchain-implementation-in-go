@@ -11,10 +11,15 @@ func NewIntRequest(height uint32, requester chan [BlockSize]byte) IntRequest {
 	return IntRequest{Height: height, requester: requester}
 }
 
+// NewHashRequest creates new int request
+func NewHashRequest(hash [32]byte, requester chan [BlockSize]byte) HashRequest {
+	return HashRequest{Hash: hash, requester: requester}
+}
+
 // HashRequest is channel to request full block by hash
 type HashRequest struct {
 	Hash      [32]byte
-	requester chan []byte
+	requester chan [BlockSize]byte
 }
 
 // Broadcaster groups subscribed miners
@@ -58,7 +63,6 @@ func (b *Broadcaster) SendBlock(a [BlockSize]byte, sender chan [BlockSize]byte) 
 // SendBlockTo broadcast block to specific channel
 func (b *Broadcaster) SendBlockTo(a []byte, receiver chan []byte) {
 	receiver <- a
-
 }
 
 // IntRequestBlock request block by int to everyone
@@ -68,8 +72,8 @@ func (b *Broadcaster) IntRequestBlock(a IntRequest) {
 	}
 }
 
-// IntRequestBlock request block by hash to everyone
-func (b *Broadcaster) hashRequestBlock(a HashRequest) {
+// HashRequestBlock request block by hash to everyone
+func (b *Broadcaster) HashRequestBlock(a HashRequest) {
 	for _, c := range b.HashRequestChannels {
 		c <- a
 	}

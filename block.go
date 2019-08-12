@@ -12,6 +12,9 @@ import (
 // BlockSize size of serialized struct
 const BlockSize = 168
 
+// GenesisBlock is first block for everyone
+var GenesisBlock *Block
+
 // Block is basic type for node in blockchain
 type Block struct {
 	Data       [32]byte
@@ -21,8 +24,6 @@ type Block struct {
 	BlockCount uint32
 	Owner      [8]byte
 }
-
-
 
 // 5*32+8 = 168
 
@@ -95,5 +96,6 @@ func generateGenesis(difficulty uint32, m *Miner) *Block {
 		genesis.Nonce++
 	}
 
+	GenesisBlock = genesis
 	return genesis
 }
