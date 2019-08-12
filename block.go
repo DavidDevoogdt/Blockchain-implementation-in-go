@@ -63,6 +63,11 @@ func (b *Block) Hash() [32]byte {
 
 // Print prints human readable discription
 func (b *Block) Print() {
+	b.print("")
+}
+
+// Print prints human readable discription
+func (b *Block) print(prefix string) {
 	fmt.Printf("\n_____________________\n")
 	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nOwner %x\nLocation %x", b.BlockCount, b.Data, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), b.Owner[:], &b)
 	fmt.Printf("_____________________\n")

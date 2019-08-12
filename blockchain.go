@@ -39,7 +39,8 @@ func (bc *BlockChain) GetBlockAtHeight(height uint32) *Block {
 	for i := uint32(0); i < max-height; i++ {
 		current = current.PrevBlockChainNode
 	}
-	fmt.Printf("requested %d, got %d", height, current.Block.BlockCount)
+
+	//fmt.Printf("requested %d, got %d", height, current.Block.BlockCount)
 
 	return current.Block
 }
@@ -52,6 +53,7 @@ func (bc *BlockChain) GetBlockAtHash(hash [32]byte) *Block {
 // return bool specifies whether miner should stop immediately
 func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	k := bc.Miner
+
 	var name string
 	if k != nil {
 		name = fmt.Sprintf("%s", bc.Miner.Name)
@@ -60,13 +62,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	}
 
 	if !block0.Verify() {
-		fmt.Printf("-%s----Block not ok, not added\n", name)
+		bc.Miner.DebugPrint(fmt.Sprintf("-%s----Block not ok, not added\n", name))
 		return false
 	}
 
 	_, nok := bc.allBlocksChainNodes[block0.Hash()]
 	if nok {
-		fmt.Printf("%s-----already in chain\n", name)
+		bc.Miner.DebugPrint(fmt.Sprintf("%s-----already in chain\n", name))
 		return false
 	}
 
@@ -76,11 +78,11 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	prevBlock, ok := bc.allBlocksChainNodes[_PrevHash]
 
 	if !ok {
-		fmt.Printf("OOOOOOOOrphan: got %x with prehash %x", _Hash, _PrevHash)
+		//debug<- fmt.Sprintf("OOOOOOOOrphan: got %x with prehash %x", _Hash, _PrevHash)
 		// check whether prevhash in orphan chain
 		for _, obc := range bc.OrphanBlockChains[:] {
 			if obc.HasBlock(_PrevHash) {
-				fmt.Printf("-----block added to orphaned chain \n")
+				bc.Miner.DebugPrint(fmt.Sprintf("-----block added to orphaned chain \n"))
 				obc.addBlockChainNode(block0)
 				return false
 			}
@@ -97,13 +99,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				obc.allBlocksChainNodes[_Hash] = newBCN
 
 				go bc.Miner.HashRequestBlock(block0.PrevHash)
-				fmt.Printf("%s-----setting new root for orphaned chain \n", name)
+				bc.Miner.DebugPrint(fmt.Sprintf("%s-----setting new root for orphaned chain \n", name))
 				return false
 			}
 		}
 
-		fmt.Printf("%s-----prev Block not in history, requesting %.10x\n", name, _PrevHash)
-		fmt.Printf("%s-----creating new orphaned chain \n", name)
+		bc.Miner.DebugPrint(fmt.Sprintf("%s-----prev Block not in history, requesting %.10x\n", name, _PrevHash))
+		bc.Miner.DebugPrint(fmt.Sprintf("%s-----creating new orphaned chain \n", name))
 		bc.OrphanBlockChains = append(bc.OrphanBlockChains, bc.InitializeOrphanBlockChain(block0))
 		go bc.Miner.HashRequestBlock(_PrevHash)
 		return false
@@ -120,7 +122,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	// check whether hash is contained as prehash in orphaned chains
 	for i, obc := range bc.OrphanBlockChains {
 		if _Hash == obc.Root.Block.PrevHash {
-			fmt.Printf("%s-----joining orphaned chain to main chain!\n", name)
+			bc.Miner.DebugPrint(fmt.Sprintf("%s-----joining orphaned chain to main chain!\n", name))
 			obc.Root.PrevBlockChainNode = newBCN
 
 			// delete prev node from head if that were the case
@@ -144,7 +146,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 
 				bc.OtherHeadBlocksChainNodes[mainHead.Hash] = mainHead
 				bc.Head = orphanHead
-				fmt.Printf("%s-----orphaned chain is now main chain\n", name)
+				bc.Miner.DebugPrint(fmt.Sprintf("%s-----orphaned chain is now main chain\n", name))
 				return true
 			}
 
@@ -163,25 +165,25 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				bc.OtherHeadBlocksChainNodes[bc.Head.Hash] = bc.Head
 				delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
 				bc.Head = newBCN
-				fmt.Printf("-----block added as new head \n")
+				bc.Miner.DebugPrint(fmt.Sprintf("-----block added as new head \n"))
 				return true
 			}
 
 			delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
 			bc.OtherHeadBlocksChainNodes[newBCN.Hash] = newBCN
-			fmt.Printf("-----block added to forked tree \n")
+			bc.Miner.DebugPrint(fmt.Sprintf("-----block added to forked tree \n"))
 			return false
 
 		}
 		delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
 		bc.OtherHeadBlocksChainNodes[newBCN.Hash] = newBCN
-		fmt.Printf("-----new fork created \n")
+		bc.Miner.DebugPrint(fmt.Sprintf("-----new fork created \n"))
 		return false
 
 	}
 
 	bc.Head = newBCN
-	fmt.Printf("-----added to main chain \n")
+	bc.Miner.DebugPrint(fmt.Sprintf("-----added to main chain \n"))
 	return true
 
 }
@@ -204,7 +206,7 @@ func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 	bl.Hash = bl.Block.Hash()
 	bc.Head = bl
 	bc.Root = bl
-
+	bc.Miner.Debug = false
 	bc.allBlocksChainNodes[bl.Hash] = bl
 
 	return genesisMiner
@@ -228,29 +230,41 @@ func (bc *BlockChain) Verify() bool {
 
 // Print print
 func (bc *BlockChain) Print() {
+	bc.print("")
+}
+
+func (bc *BlockChain) print(prefix string) {
 
 	BlockChainNode := bc.Head
-	BlockChainNode.Block.Print()
+	BlockChainNode.Block.print(prefix)
 	for BlockChainNode.Block.BlockCount != 0 {
 		BlockChainNode = BlockChainNode.PrevBlockChainNode
-		BlockChainNode.Block.Print()
-
+		BlockChainNode.Block.print(prefix)
 	}
+
+	for _, obc := range bc.OrphanBlockChains {
+		obc.print(prefix + "---")
+	}
+
 }
 
 // PrintHash print
 func (bc *BlockChain) PrintHash() {
+	bc.printHash("")
+}
+
+func (bc *BlockChain) printHash(prefix string) {
 
 	BlockChainNode := bc.Head
-	fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
+	fmt.Printf("%s%d:%x\n", prefix, BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
 	for BlockChainNode != bc.Root {
 		BlockChainNode = BlockChainNode.PrevBlockChainNode
-		fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
+		fmt.Printf("%s%d:%x\n", prefix, BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
 
 	}
 
 	for _, obc := range bc.OrphanBlockChains {
-		obc.PrintHash()
+		obc.printHash(prefix + "---")
 	}
 
 }

@@ -22,6 +22,7 @@ type Miner struct {
 	HashRequestChannel chan HashRequest
 	Broadcaster        *Broadcaster
 	interrupt          chan bool
+	Debug              bool
 }
 
 // CreateMiner initates miner with given broadcaster and blockchain
@@ -48,6 +49,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 
 	m.BlockChain.Miner = m
 	m.interrupt = make(chan bool)
+	m.Debug = false
 
 	go m.ReceiveBlocks()
 
@@ -84,8 +86,23 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	go m.ReceiveBlocks()
 	go m.intRequests()
 	go m.hashRequests()
+	m.Debug = false
 
 	return m
+}
+
+//DebugPrint print if debug is on
+func (m *Miner) DebugPrint(msg string) {
+	if m != nil {
+		if m.Debug {
+			fmt.Printf(msg)
+		}
+	}
+}
+
+// StartDebug starts debug logging
+func (m *Miner) StartDebug() {
+	m.Debug = true
 }
 
 // ReceiveBlocks should be called once to receive blocks from broadcasters

@@ -37,9 +37,11 @@ func main() {
 		<-InsertMiner
 		m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 
+		m.StartDebug()
 		Miners = append(Miners, m)
 
 		go m.MineContiniously()
+
 		NumberOfMiners++
 	}()
 
@@ -55,26 +57,4 @@ func main() {
 		fmt.Printf("##########################################################################")
 
 	}
-
-	/*
-		go Miners[0].MineContiniously()
-
-		Wait := time.After(5000 * time.Millisecond)
-		<-Wait
-
-
-		Miners[1] = MinerFromScratch("David", broadcaster)
-		go Miners[1].MineContiniously()
-
-		End := time.Tick(5000 * time.Millisecond)
-
-		for {
-			<-End
-			fmt.Printf("##########################################################################")
-			Miners[0].Print()
-			Miners[1].Print()
-
-		}
-	*/
-
 }
