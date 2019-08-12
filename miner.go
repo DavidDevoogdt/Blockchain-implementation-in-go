@@ -82,6 +82,8 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.Broadcaster.append(m.ReceiveChannel, m.IntRequestChannel, m.HashRequestChannel)
 	m.interrupt = make(chan bool)
 	go m.ReceiveBlocks()
+	go m.intRequests()
+	go m.hashRequests()
 
 	return m
 }
@@ -91,7 +93,7 @@ func (m *Miner) ReceiveBlocks() {
 	for {
 		a := <-m.ReceiveChannel
 		bl := deSerialize(a)
-		fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
+		//fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
 
 		if m.BlockChain.addBlockChainNode(bl) {
 			m.interrupt <- true
@@ -113,6 +115,7 @@ func (m *Miner) intRequests() {
 func (m *Miner) hashRequests() {
 	for {
 		a := <-m.HashRequestChannel
+		//fmt.Printf("Minerpool recieved hashRequest for block %x", a.Hash)
 		b := m.BlockChain.GetBlockAtHash(a.Hash)
 		if b != nil {
 			a.requester <- b.serialize()
@@ -168,7 +171,7 @@ func (m *Miner) MineBlock(data string) *Block {
 func (m *Miner) MineContiniously() {
 	for {
 		blc := m.MineBlock(fmt.Sprintf("dit is blok nr %d", m.BlockChain.Head.Block.BlockCount))
-		print(blc)
+		//print(blc)
 		if blc == nil {
 			fmt.Printf("%s was not fast enough \n", m.Name)
 		} else {
