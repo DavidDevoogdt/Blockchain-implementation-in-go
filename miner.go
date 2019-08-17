@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 )
@@ -11,32 +10,27 @@ import (
 // Miner main type
 type Miner struct {
 	Name       string
-	Wallet     [8]byte
+	Wallet     *Wallet
 	FileName   string
 	BlockChain *BlockChain
-	PublicKey  []byte
-	PrivateKey []byte
 
 	ReceiveChannel     chan [BlockSize]byte
 	IntRequestChannel  chan IntRequest
 	HashRequestChannel chan HashRequest
 	Broadcaster        *Broadcaster
 	interrupt          chan bool
-	Debug              bool
+
+	Debug    bool
+	isMining bool
 }
 
-// CreateMiner initates miner with given broadcaster and blockchain
+// CreateMiner initiates miner with given broadcaster and blockchain
 func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]byte) *Miner {
 
 	m := new(Miner)
 	m.Name = name
-	foo := make([]byte, 8)
-	rand.Read(foo)
-	copy(m.Wallet[:], foo[0:7])
-	priv, pub := GenerateKeyPair(16)
 
-	m.PrivateKey = PrivateKeyToBytes(priv)
-	m.PublicKey = PublicKeyToBytes(pub)
+	m.Wallet = InitializeWallet()
 
 	m.BlockChain = DeSerializeBlockChain(blockChain)
 
@@ -68,13 +62,8 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 
 	m := new(Miner)
 	m.Name = name
-	foo := make([]byte, 8)
-	rand.Read(foo)
-	copy(m.Wallet[:], foo[0:7])
-	priv, pub := GenerateKeyPair(16)
+	m.Wallet = InitializeWallet()
 
-	m.PrivateKey = PrivateKeyToBytes(priv)
-	m.PublicKey = PublicKeyToBytes(pub)
 	m.BlockChain = blockChain
 	m.Broadcaster = Broadcaster
 
@@ -113,7 +102,10 @@ func (m *Miner) ReceiveBlocks() {
 		//fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
 
 		if m.BlockChain.addBlockChainNode(bl) {
-			m.interrupt <- true
+			if m.isMining {
+				m.interrupt <- true
+			}
+
 		}
 
 	}
@@ -132,7 +124,7 @@ func (m *Miner) intRequests() {
 func (m *Miner) hashRequests() {
 	for {
 		a := <-m.HashRequestChannel
-		//fmt.Printf("Minerpool recieved hashRequest for block %x", a.Hash)
+		//fmt.Printf("Minerpool received hashRequest for block %x", a.Hash)
 		b := m.BlockChain.GetBlockAtHash(a.Hash)
 		if b != nil {
 			a.requester <- b.serialize()
@@ -157,7 +149,7 @@ func (m *Miner) HashRequestBlock(hash [32]byte) {
 
 // MineBlock mines block and add own credentials
 func (m *Miner) MineBlock(data string) *Block {
-
+	m.isMining = true
 	//fmt.Printf("%s started mining %s\n", m.Name, data)
 	prevBlock := m.BlockChain.Head.Block
 
@@ -168,15 +160,15 @@ func (m *Miner) MineBlock(data string) *Block {
 	newBlock.Data = sha256.Sum256([]byte(data))
 	newBlock.Difficulty = prevBlock.Difficulty
 
-	copy(newBlock.Owner[:], m.Wallet[:])
-
 	for {
 		select {
 		case <-m.interrupt:
-			//fmt.Printf("interupted %t")
+			m.isMining = false
 			return nil
 		default:
 			if compHash(newBlock.Difficulty, newBlock.Hash()) {
+
+				m.isMining = false
 				return newBlock
 			}
 			newBlock.Nonce++
@@ -190,7 +182,7 @@ func (m *Miner) MineContiniously() {
 		blc := m.MineBlock(fmt.Sprintf("dit is blok nr %d", m.BlockChain.Head.Block.BlockCount))
 		//print(blc)
 		if blc == nil {
-			fmt.Printf("%s was not fast enough \n", m.Name)
+			//fmt.Printf("%s was not fast enough \n", m.Name)
 		} else {
 			fmt.Printf("%s mined block: \n", m.Name)
 			m.BroadcastBlock(blc)
@@ -208,9 +200,9 @@ func (m *Miner) Print() {
 }
 
 // PrintHash print
-func (m *Miner) PrintHash() {
+func (m *Miner) PrintHash(n int) {
 	fmt.Printf("\n-----------------------------\n")
 	fmt.Printf("name miner: %s\n", m.Name)
-	m.BlockChain.PrintHash()
+	m.BlockChain.PrintHash(n)
 	fmt.Printf("\n-----------------------------\n")
 }

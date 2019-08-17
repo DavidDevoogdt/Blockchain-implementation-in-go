@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
-)
+)			
 
 // NumberOfMiners is local number of threads competing
 
@@ -31,18 +31,22 @@ func main() {
 		go Miners[i].MineContiniously()
 	}
 
-	InsertMiner := time.After(10000 * time.Millisecond)
+	InsertMiner := time.Tick(1000 * time.Millisecond)
 
 	go func() {
-		<-InsertMiner
-		m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
+		for {
+			<-InsertMiner
+			m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 
-		m.StartDebug()
-		Miners = append(Miners, m)
+			m.StartDebug()
+			Miners = append(Miners, m)
 
-		go m.MineContiniously()
+			//go m.MineContiniously()
 
-		NumberOfMiners++
+			NumberOfMiners++
+
+		}
+
 	}()
 
 	End := time.Tick(5000 * time.Millisecond)
@@ -52,7 +56,7 @@ func main() {
 		fmt.Printf("##########################################################################")
 		Miners[0].Print()
 		for i := 1; i < NumberOfMiners; i++ {
-			Miners[i].PrintHash()
+			Miners[i].PrintHash(3)
 		}
 		fmt.Printf("##########################################################################")
 

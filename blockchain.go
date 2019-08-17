@@ -6,25 +6,26 @@ import (
 
 // BlockChain is keeps track of known heads of tree
 type BlockChain struct {
-	Head                      *BlockChainNode
-	allBlocksChainNodes       map[[32]byte]*BlockChainNode
-	OtherHeadBlocksChainNodes map[[32]byte]*BlockChainNode
-	Miner                     *Miner
-	OrphanBlockChains         []*BlockChain
-	IsOrphan                  bool
-	Root                      *BlockChainNode
+	Head              *BlockChainNode
+	Root              *BlockChainNode
+	AllNodesMap       map[[32]byte]*BlockChainNode
+	OtherHeadNodes    map[[32]byte]*BlockChainNode
+	Miner             *Miner
+	OrphanBlockChains []*BlockChain
+	IsOrphan          bool
 }
 
 // BlockChainNode links block to previous parent
 type BlockChainNode struct {
 	PrevBlockChainNode *BlockChainNode
+	NextBlockChainNode *BlockChainNode
 	Block              *Block
 	Hash               [32]byte
 }
 
 // HasBlock determines whether block is in chain
 func (bc *BlockChain) HasBlock(hash [32]byte) bool {
-	_, ok := bc.allBlocksChainNodes[hash]
+	_, ok := bc.AllNodesMap[hash]
 	return ok
 }
 
@@ -47,7 +48,11 @@ func (bc *BlockChain) GetBlockAtHeight(height uint32) *Block {
 
 // GetBlockAtHash fetches block
 func (bc *BlockChain) GetBlockAtHash(hash [32]byte) *Block {
-	return bc.allBlocksChainNodes[hash].Block
+	val, ok := bc.AllNodesMap[hash]
+	if ok {
+		return val.Block
+	}
+	return nil
 }
 
 // return bool specifies whether miner should stop immediately
@@ -66,7 +71,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 		return false
 	}
 
-	_, nok := bc.allBlocksChainNodes[block0.Hash()]
+	_, nok := bc.AllNodesMap[block0.Hash()]
 	if nok {
 		bc.Miner.DebugPrint(fmt.Sprintf("%s-----already in chain\n", name))
 		return false
@@ -75,7 +80,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	_Hash := block0.Hash()
 	_PrevHash := block0.PrevHash
 
-	prevBlock, ok := bc.allBlocksChainNodes[_PrevHash]
+	prevBlock, ok := bc.AllNodesMap[_PrevHash]
 
 	if !ok {
 		//debug<- fmt.Sprintf("OOOOOOOOrphan: got %x with prehash %x", _Hash, _PrevHash)
@@ -95,8 +100,9 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				newBCN.Block = block0
 				newBCN.Hash = _Hash
 				obc.Root.PrevBlockChainNode = newBCN
+				newBCN.NextBlockChainNode = obc.Root
 				obc.Root = newBCN
-				obc.allBlocksChainNodes[_Hash] = newBCN
+				obc.AllNodesMap[_Hash] = newBCN
 
 				go bc.Miner.HashRequestBlock(block0.PrevHash)
 				bc.Miner.DebugPrint(fmt.Sprintf("%s-----setting new root for orphaned chain \n", name))
@@ -115,9 +121,10 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	newBCN := new(BlockChainNode)
 	newBCN.Block = block0
 	newBCN.Hash = block0.Hash()
-	bc.allBlocksChainNodes[_Hash] = newBCN
+	bc.AllNodesMap[_Hash] = newBCN
 
 	newBCN.PrevBlockChainNode = prevBlock
+	prevBlock.NextBlockChainNode = newBCN
 
 	// check whether hash is contained as prehash in orphaned chains
 	for i, obc := range bc.OrphanBlockChains {
@@ -126,13 +133,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 			obc.Root.PrevBlockChainNode = newBCN
 
 			// delete prev node from head if that were the case
-			delete(bc.OtherHeadBlocksChainNodes, _PrevHash)
+			delete(bc.OtherHeadNodes, _PrevHash)
 			//merge hashmaps
-			for k, v := range obc.OtherHeadBlocksChainNodes {
-				bc.OtherHeadBlocksChainNodes[k] = v
+			for k, v := range obc.OtherHeadNodes {
+				bc.OtherHeadNodes[k] = v
 			}
-			for k, v := range obc.allBlocksChainNodes {
-				bc.allBlocksChainNodes[k] = v
+			for k, v := range obc.AllNodesMap {
+				bc.AllNodesMap[k] = v
 			}
 
 			// put orphaned blockchain to last element and remove it
@@ -144,13 +151,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 			orphanHead := obc.Head
 			if orphanHead.Block.BlockCount > bc.Head.Block.BlockCount {
 
-				bc.OtherHeadBlocksChainNodes[mainHead.Hash] = mainHead
+				bc.OtherHeadNodes[mainHead.Hash] = mainHead
 				bc.Head = orphanHead
 				bc.Miner.DebugPrint(fmt.Sprintf("%s-----orphaned chain is now main chain\n", name))
 				return true
 			}
 
-			bc.OtherHeadBlocksChainNodes[orphanHead.Hash] = orphanHead
+			bc.OtherHeadNodes[orphanHead.Hash] = orphanHead
 			return false
 
 		}
@@ -158,25 +165,31 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 
 	//nothing special, just main chain
 	if prevBlock.Hash != bc.Head.Hash {
-		_, ok = bc.OtherHeadBlocksChainNodes[_PrevHash]
+		_, ok = bc.OtherHeadNodes[_PrevHash]
 
 		if ok { ////non primary chain got longer, check whether new longest
 			if bc.Head.Block.BlockCount < block0.BlockCount { /////got new best
-				bc.OtherHeadBlocksChainNodes[bc.Head.Hash] = bc.Head
-				delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
+				bc.OtherHeadNodes[bc.Head.Hash] = bc.Head
+				delete(bc.OtherHeadNodes, block0.PrevHash)
 				bc.Head = newBCN
+				ptr := bc.Head
+				//set new chain for forward linked nodes
+				for i := newBCN.Block.BlockCount; i > 0; i++ {
+					ptr.PrevBlockChainNode.NextBlockChainNode = ptr
+					ptr = ptr.PrevBlockChainNode
+				}
 				bc.Miner.DebugPrint(fmt.Sprintf("-----block added as new head \n"))
 				return true
 			}
 
-			delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
-			bc.OtherHeadBlocksChainNodes[newBCN.Hash] = newBCN
+			delete(bc.OtherHeadNodes, block0.PrevHash)
+			bc.OtherHeadNodes[newBCN.Hash] = newBCN
 			bc.Miner.DebugPrint(fmt.Sprintf("-----block added to forked tree \n"))
 			return false
 
 		}
-		delete(bc.OtherHeadBlocksChainNodes, block0.PrevHash)
-		bc.OtherHeadBlocksChainNodes[newBCN.Hash] = newBCN
+		delete(bc.OtherHeadNodes, block0.PrevHash)
+		bc.OtherHeadNodes[newBCN.Hash] = newBCN
 		bc.Miner.DebugPrint(fmt.Sprintf("-----new fork created \n"))
 		return false
 
@@ -194,8 +207,8 @@ func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 	bl := new(BlockChainNode)
 	bl.PrevBlockChainNode = bl
 	bc := new(BlockChain)
-	bc.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	bc.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	bc.AllNodesMap = make(map[[32]byte]*BlockChainNode)
+	bc.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
 	bc.OrphanBlockChains = make([]*BlockChain, 0)
 	bc.IsOrphan = false
 
@@ -207,7 +220,7 @@ func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 	bc.Head = bl
 	bc.Root = bl
 	bc.Miner.Debug = false
-	bc.allBlocksChainNodes[bl.Hash] = bl
+	bc.AllNodesMap[bl.Hash] = bl
 
 	return genesisMiner
 }
@@ -230,41 +243,38 @@ func (bc *BlockChain) Verify() bool {
 
 // Print print
 func (bc *BlockChain) Print() {
-	bc.print("")
-}
-
-func (bc *BlockChain) print(prefix string) {
-
 	BlockChainNode := bc.Head
-	BlockChainNode.Block.print(prefix)
+	BlockChainNode.Block.print()
 	for BlockChainNode.Block.BlockCount != 0 {
 		BlockChainNode = BlockChainNode.PrevBlockChainNode
-		BlockChainNode.Block.print(prefix)
+		BlockChainNode.Block.print()
 	}
-
-	for _, obc := range bc.OrphanBlockChains {
-		obc.print(prefix + "---")
-	}
-
 }
 
 // PrintHash print
-func (bc *BlockChain) PrintHash() {
-	bc.printHash("")
-}
-
-func (bc *BlockChain) printHash(prefix string) {
+func (bc *BlockChain) PrintHash(n int) {
 
 	BlockChainNode := bc.Head
-	fmt.Printf("%s%d:%x\n", prefix, BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
-	for BlockChainNode != bc.Root {
-		BlockChainNode = BlockChainNode.PrevBlockChainNode
-		fmt.Printf("%s%d:%x\n", prefix, BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
+	fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
+	if n == 0 {
+		for BlockChainNode != bc.Root {
 
+			BlockChainNode = BlockChainNode.PrevBlockChainNode
+			if BlockChainNode == nil {
+				return
+			}
+			fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
+
+		}
+		return
 	}
 
-	for _, obc := range bc.OrphanBlockChains {
-		obc.printHash(prefix + "---")
+	for i := 0; i < n; i++ {
+		BlockChainNode = BlockChainNode.PrevBlockChainNode
+		if BlockChainNode == nil {
+			return
+		}
+		fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
 	}
 
 }
@@ -287,8 +297,8 @@ func (bc *BlockChain) SerializeBlockChain() [][BlockSize]byte {
 //DeSerializeBlockChain get blockchain from byte array
 func DeSerializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 	blockChain := new(BlockChain)
-	blockChain.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.AllNodesMap = make(map[[32]byte]*BlockChainNode)
+	blockChain.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
 	blockChain.OrphanBlockChains = make([]*BlockChain, 0)
 	blockChain.IsOrphan = false
 
@@ -299,7 +309,7 @@ func DeSerializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 
 	blockChain.Head = bcn
 	blockChain.Root = bcn
-	blockChain.allBlocksChainNodes[bcn.Hash] = bcn
+	blockChain.AllNodesMap[bcn.Hash] = bcn
 
 	//first block
 
@@ -313,8 +323,8 @@ func DeSerializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 // InitializeOrphanBlockChain generates pointer to new bc
 func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 	blockChain := new(BlockChain)
-	blockChain.allBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OtherHeadBlocksChainNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.AllNodesMap = make(map[[32]byte]*BlockChainNode)
+	blockChain.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
 	blockChain.OrphanBlockChains = nil //should never be called
 	blockChain.IsOrphan = true
 
@@ -325,7 +335,7 @@ func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 
 	blockChain.Head = bcn
 	blockChain.Root = bcn
-	blockChain.allBlocksChainNodes[bcn.Hash] = bcn
+	blockChain.AllNodesMap[bcn.Hash] = bcn
 
 	blockChain.Miner = bc.Miner
 

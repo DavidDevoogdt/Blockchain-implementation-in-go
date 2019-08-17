@@ -48,6 +48,7 @@ func (b *Broadcaster) append(receive chan [BlockSize]byte, intRequest chan IntRe
 	b.IntRequestChannels = append(b.IntRequestChannels, intRequest)
 	b.HashRequestChannels = append(b.HashRequestChannels, hashRequest)
 	b.Count++
+
 }
 
 // SendBlock broadcast block to everyone

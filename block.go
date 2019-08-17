@@ -9,9 +9,6 @@ import (
 
 ///capital letter -> exported field
 
-// BlockSize size of serialized struct
-const BlockSize = 168
-
 // GenesisBlock is first block for everyone
 var GenesisBlock *Block
 
@@ -22,19 +19,18 @@ type Block struct {
 	Nonce      uint32
 	Difficulty uint32
 	BlockCount uint32
-	Owner      [8]byte
 }
 
-// 5*32+8 = 168
+// BlockSize size of serialized struct
+const BlockSize = 76
 
 func (b *Block) preHash() [BlockSize]byte {
-	var d [168]byte
+	var d [BlockSize]byte
 	copy(d[0:32], b.Data[0:32])
 	copy(d[32:64], b.PrevHash[0:32])
-	binary.LittleEndian.PutUint32(d[64:96], b.Nonce)
-	binary.LittleEndian.PutUint32(d[96:128], b.Difficulty)
-	binary.LittleEndian.PutUint32(d[128:160], b.BlockCount)
-	copy(d[160:168], b.Owner[0:8])
+	binary.LittleEndian.PutUint32(d[64:68], b.Nonce)
+	binary.LittleEndian.PutUint32(d[68:72], b.Difficulty)
+	binary.LittleEndian.PutUint32(d[72:76], b.BlockCount)
 	return d
 }
 
@@ -47,11 +43,9 @@ func deSerialize(d [BlockSize]byte) *Block {
 	b := new(Block)
 	copy(b.Data[0:32], d[0:32])
 	copy(b.PrevHash[0:32], d[32:64])
-	b.Nonce = binary.LittleEndian.Uint32(d[64:96])
-	b.Difficulty = binary.LittleEndian.Uint32(d[96:128])
-	b.BlockCount = binary.LittleEndian.Uint32(d[128:160])
-	copy(b.Owner[0:8], d[160:168])
-
+	b.Nonce = binary.LittleEndian.Uint32(d[64:68])
+	b.Difficulty = binary.LittleEndian.Uint32(d[68:72])
+	b.BlockCount = binary.LittleEndian.Uint32(d[72:76])
 	return b
 }
 
@@ -61,19 +55,19 @@ func (b *Block) Hash() [32]byte {
 	return sha256.Sum256(a[:])
 }
 
-// Print prints human readable discription
+// Print prints human readable description
 func (b *Block) Print() {
-	b.print("")
+	b.print()
 }
 
-// Print prints human readable discription
-func (b *Block) print(prefix string) {
+// Print prints human readable description
+func (b *Block) print() {
 	fmt.Printf("\n_____________________\n")
-	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nOwner %x\nLocation %x", b.BlockCount, b.Data, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), b.Owner[:], &b)
+	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nLocation %x", b.BlockCount, b.Data, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), &b)
 	fmt.Printf("_____________________\n")
 }
 
-// Verify checks wheter hash is valid according to difficulty
+// Verify checks whether hash is valid according to difficulty
 func (b *Block) Verify() bool {
 	return compHash(b.Difficulty, b.Hash())
 }
@@ -92,7 +86,7 @@ func generateGenesis(difficulty uint32, m *Miner) *Block {
 	genesis.Data = sha256.Sum256([]byte("hello world!"))
 	genesis.Difficulty = difficulty
 	genesis.BlockCount = 0
-	copy(genesis.Owner[:], m.Wallet[:])
+	//copy(genesis.Owner[:], m.Wallet[:])
 
 	for {
 		if compHash(genesis.Difficulty, genesis.Hash()) {

@@ -1,8 +1,10 @@
 //copied from https://gist.github.com/miguelmota/3ea9286bd1d3c2a985b67cac4ba2130a
+//adapted for fixed keysize
 
 package main
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
@@ -11,9 +13,12 @@ import (
 	"fmt"
 )
 
+// KeySize is used for all user keys
+const KeySize = 16
+
 // GenerateKeyPair generates a new key pair
-func GenerateKeyPair(bits int) (*rsa.PrivateKey, *rsa.PublicKey) {
-	privkey, err := rsa.GenerateKey(rand.Reader, bits)
+func GenerateKeyPair() (*rsa.PrivateKey, *rsa.PublicKey) {
+	privkey, err := rsa.GenerateKey(rand.Reader, KeySize)
 	if err != nil {
 		fmt.Println(err)
 
@@ -22,7 +27,7 @@ func GenerateKeyPair(bits int) (*rsa.PrivateKey, *rsa.PublicKey) {
 }
 
 // PrivateKeyToBytes private key to bytes
-func PrivateKeyToBytes(priv *rsa.PrivateKey) []byte {
+func PrivateKeyToBytes(priv *rsa.PrivateKey) [KeySize]byte {
 	privBytes := pem.EncodeToMemory(
 		&pem.Block{
 			Type:  "RSA PRIVATE KEY",
@@ -30,11 +35,13 @@ func PrivateKeyToBytes(priv *rsa.PrivateKey) []byte {
 		},
 	)
 
-	return privBytes
+	var output [KeySize]byte
+	copy(output[0:KeySize], privBytes[0:KeySize])
+	return output
 }
 
 // PublicKeyToBytes public key to bytes
-func PublicKeyToBytes(pub *rsa.PublicKey) []byte {
+func PublicKeyToBytes(pub *rsa.PublicKey) [KeySize]byte {
 	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		fmt.Println(err)
@@ -44,12 +51,17 @@ func PublicKeyToBytes(pub *rsa.PublicKey) []byte {
 		Type:  "RSA PUBLIC KEY",
 		Bytes: pubASN1,
 	})
-
-	return pubBytes
+	var output [KeySize]byte
+	copy(output[0:KeySize], pubBytes[0:KeySize])
+	return output
 }
 
 // BytesToPrivateKey bytes to private key
-func BytesToPrivateKey(priv []byte) *rsa.PrivateKey {
+func BytesToPrivateKey(private [KeySize]byte) *rsa.PrivateKey {
+
+	priv := make([]byte, KeySize)
+	copy(priv[0:KeySize], private[0:KeySize])
+
 	block, _ := pem.Decode(priv)
 	enc := x509.IsEncryptedPEMBlock(block)
 	b := block.Bytes
@@ -69,7 +81,10 @@ func BytesToPrivateKey(priv []byte) *rsa.PrivateKey {
 }
 
 // BytesToPublicKey bytes to public key
-func BytesToPublicKey(pub []byte) *rsa.PublicKey {
+func BytesToPublicKey(public [KeySize]byte) *rsa.PublicKey {
+	pub := make([]byte, KeySize)
+	copy(pub[0:KeySize], public[0:KeySize])
+
 	block, _ := pem.Decode(pub)
 	enc := x509.IsEncryptedPEMBlock(block)
 	b := block.Bytes
@@ -110,4 +125,23 @@ func DecryptWithPrivateKey(ciphertext []byte, priv *rsa.PrivateKey) []byte {
 		fmt.Println(err)
 	}
 	return plaintext
+}
+
+// SignWithPrivateKey signs hashed byte array
+func SignWithPrivateKey(hashed [32]byte, priv *rsa.PrivateKey) [32]byte {
+	hash := crypto.SHA256
+	ciphertext, err := rsa.SignPSS(rand.Reader, priv, hash, hashed[:], nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	var a [32]byte
+	copy(a[0:32], ciphertext[0:32])
+	return a
+}
+
+// VerifyWithPublicKey verifies SignWithPrivateKey
+func VerifyWithPublicKey(hashed [32]byte, sig [32]byte, pub *rsa.PublicKey) bool {
+	hash := crypto.SHA256
+	err := rsa.VerifyPSS(pub, hash, hashed[:], sig[:], nil)
+	return err == nil
 }
