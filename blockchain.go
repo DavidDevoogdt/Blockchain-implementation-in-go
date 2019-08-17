@@ -104,7 +104,10 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				obc.Root = newBCN
 				obc.AllNodesMap[_Hash] = newBCN
 
-				go bc.Miner.HashRequestBlock(block0.PrevHash)
+				//go bc.Miner.HashRequestBlock(block0.PrevHash)
+
+				go bc.Miner.RequestBlockFromHash(block0.PrevHash)
+
 				bc.Miner.DebugPrint(fmt.Sprintf("%s-----setting new root for orphaned chain \n", name))
 				return false
 			}
@@ -113,7 +116,8 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 		bc.Miner.DebugPrint(fmt.Sprintf("%s-----prev Block not in history, requesting %.10x\n", name, _PrevHash))
 		bc.Miner.DebugPrint(fmt.Sprintf("%s-----creating new orphaned chain \n", name))
 		bc.OrphanBlockChains = append(bc.OrphanBlockChains, bc.InitializeOrphanBlockChain(block0))
-		go bc.Miner.HashRequestBlock(_PrevHash)
+
+		go bc.Miner.RequestBlockFromHash(block0.PrevHash)
 		return false
 
 	}
@@ -271,7 +275,7 @@ func (bc *BlockChain) PrintHash(n int) {
 
 	for i := 0; i < n; i++ {
 		BlockChainNode = BlockChainNode.PrevBlockChainNode
-		if BlockChainNode == nil {
+		if BlockChainNode == nil || BlockChainNode.Block.BlockCount == 0 {
 			return
 		}
 		fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())

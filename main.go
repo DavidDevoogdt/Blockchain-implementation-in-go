@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
-)			
+)
 
 // NumberOfMiners is local number of threads competing
 
@@ -31,7 +31,7 @@ func main() {
 		go Miners[i].MineContiniously()
 	}
 
-	InsertMiner := time.Tick(1000 * time.Millisecond)
+	InsertMiner := time.Tick(10000 * time.Millisecond)
 
 	go func() {
 		for {
@@ -45,11 +45,15 @@ func main() {
 
 			NumberOfMiners++
 
+			if NumberOfMiners == 7 {
+				return
+			}
+
 		}
 
 	}()
 
-	End := time.Tick(5000 * time.Millisecond)
+	End := time.Tick(10000 * time.Millisecond)
 
 	for {
 		<-End

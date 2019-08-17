@@ -5,7 +5,8 @@ import (
 	"fmt"
 )
 
-//import "crypto/rsa"
+// Everyone is shorthand for all subscribed receivers
+var Everyone [KeySize]byte
 
 // Miner main type
 type Miner struct {
@@ -14,11 +15,11 @@ type Miner struct {
 	FileName   string
 	BlockChain *BlockChain
 
-	ReceiveChannel     chan [BlockSize]byte
-	IntRequestChannel  chan IntRequest
-	HashRequestChannel chan HashRequest
-	Broadcaster        *Broadcaster
-	interrupt          chan bool
+	ReceiveChannel chan []byte
+	RequestChannel chan []byte
+
+	Broadcaster *Broadcaster
+	interrupt   chan bool
 
 	Debug    bool
 	isMining bool
@@ -36,16 +37,16 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 
 	m.Broadcaster = Broadcaster
 
-	m.ReceiveChannel = make(chan [BlockSize]byte)
-	m.IntRequestChannel = make(chan IntRequest)
-	m.HashRequestChannel = make(chan HashRequest)
-	m.Broadcaster.append(m.ReceiveChannel, m.IntRequestChannel, m.HashRequestChannel)
+	m.ReceiveChannel = make(chan []byte)
+	m.RequestChannel = make(chan []byte)
+	m.Broadcaster.append(m.ReceiveChannel, m.RequestChannel, m.Wallet.PublicKey)
 
 	m.BlockChain.Miner = m
 	m.interrupt = make(chan bool)
 	m.Debug = false
 
-	go m.ReceiveBlocks()
+	go m.ReceiveSend()
+	go m.ReceiveRequest()
 
 	return m
 }
@@ -67,14 +68,14 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.BlockChain = blockChain
 	m.Broadcaster = Broadcaster
 
-	m.ReceiveChannel = make(chan [BlockSize]byte)
-	m.IntRequestChannel = make(chan IntRequest)
-	m.HashRequestChannel = make(chan HashRequest)
-	m.Broadcaster.append(m.ReceiveChannel, m.IntRequestChannel, m.HashRequestChannel)
+	m.ReceiveChannel = make(chan []byte)
+	m.RequestChannel = make(chan []byte)
+	m.Broadcaster.append(m.ReceiveChannel, m.RequestChannel, m.Wallet.PublicKey)
+
 	m.interrupt = make(chan bool)
-	go m.ReceiveBlocks()
-	go m.intRequests()
-	go m.hashRequests()
+	go m.ReceiveSend()
+	go m.ReceiveRequest()
+
 	m.Debug = false
 
 	return m
@@ -94,16 +95,24 @@ func (m *Miner) StartDebug() {
 	m.Debug = true
 }
 
-// ReceiveBlocks should be called once to receive blocks from broadcasters
-func (m *Miner) ReceiveBlocks() {
+// ReceiveSend should be called once to receive blocks from broadcasters
+func (m *Miner) ReceiveSend() {
 	for {
-		a := <-m.ReceiveChannel
-		bl := deSerialize(a)
-		//fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
+		ss := DeserializeSendStruct(<-m.ReceiveChannel)
 
-		if m.BlockChain.addBlockChainNode(bl) {
-			if m.isMining {
-				m.interrupt <- true
+		switch ss.SendType {
+		case SendType["BlockHeader"]:
+			var a [BlockSize]byte
+			//fmt.Printf("data: %x\n", ss.data[:])
+			copy(a[0:BlockSize], ss.data[0:BlockSize])
+			bl := deSerialize(a)
+			//fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
+
+			if m.BlockChain.addBlockChainNode(bl) {
+				if m.isMining {
+					m.interrupt <- true
+				}
+
 			}
 
 		}
@@ -111,40 +120,38 @@ func (m *Miner) ReceiveBlocks() {
 	}
 }
 
-func (m *Miner) intRequests() {
+// ReceiveRequest ...
+func (m *Miner) ReceiveRequest() {
 	for {
-		a := <-m.IntRequestChannel
-		bl := m.BlockChain.GetBlockAtHeight(a.Height)
-		if bl != nil {
-			a.requester <- bl.serialize()
+		a := <-m.RequestChannel
+		//fmt.Printf("%x\n", a)
+		rq := DeserializeRequestStruct(a)
+
+		switch rq.RequestType {
+		case SendType["BlockHeaderFromHash"]:
+			var data [32]byte
+			copy(data[0:32], rq.data[0:32])
+			bl := m.BlockChain.GetBlockAtHash(data)
+			//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
+
+			if bl != nil {
+				blData := bl.serialize()
+				go m.Broadcaster.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
+			}
 		}
+
 	}
 }
 
-func (m *Miner) hashRequests() {
-	for {
-		a := <-m.HashRequestChannel
-		//fmt.Printf("Minerpool received hashRequest for block %x", a.Hash)
-		b := m.BlockChain.GetBlockAtHash(a.Hash)
-		if b != nil {
-			a.requester <- b.serialize()
-		}
-	}
+// BroadcastBlock shorthand to broadcast block
+func (m *Miner) BroadcastBlock(blc *Block) {
+	data := blc.serialize()
+	m.Broadcaster.Send(SendType["BlockHeader"], data[:], m.Wallet.PublicKey, Everyone)
 }
 
-// BroadcastBlock let miner broadcast block to pool
-func (m *Miner) BroadcastBlock(block0 *Block) {
-	m.Broadcaster.SendBlock(block0.serialize(), m.ReceiveChannel)
-}
-
-// IntRequestBlock let miner request block with specific number
-func (m *Miner) IntRequestBlock(number uint32) {
-	m.Broadcaster.IntRequestBlock(NewIntRequest(number, m.ReceiveChannel))
-}
-
-// HashRequestBlock let miner request block with specific number
-func (m *Miner) HashRequestBlock(hash [32]byte) {
-	m.Broadcaster.HashRequestBlock(NewHashRequest(hash, m.ReceiveChannel))
+// RequestBlockFromHash makes request for block
+func (m *Miner) RequestBlockFromHash(hash [32]byte) {
+	m.Broadcaster.Request(RequestType["BlockHeaderFromHash"], m.Wallet.PublicKey, hash[:])
 }
 
 // MineBlock mines block and add own credentials
@@ -202,7 +209,9 @@ func (m *Miner) Print() {
 // PrintHash print
 func (m *Miner) PrintHash(n int) {
 	fmt.Printf("\n-----------------------------\n")
-	fmt.Printf("name miner: %s\n", m.Name)
+	k := m.Wallet.PublicKey
+	fmt.Printf("name miner: %s (%x)\n", m.Name, k[len(k)-10:])
 	m.BlockChain.PrintHash(n)
 	fmt.Printf("\n-----------------------------\n")
+
 }

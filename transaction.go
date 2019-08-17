@@ -14,6 +14,9 @@ const TransactionInputSize = 32 + TransactionRefSize
 // TransactionOutputSize is len of a transaction output
 const TransactionOutputSize = 8 + 32 + 2*KeySize + TransactionRefSize
 
+// TransactionRequestSize is len of a transaction request
+const TransactionRequestSize = 8 + 32 + 2*KeySize
+
 // TransactionRef dd
 type TransactionRef struct {
 	BlockHash [32]byte
@@ -58,14 +61,14 @@ type TransactionBlock struct {
 // SerializeTransactionBlock serializes transactionblock
 func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 
-	buf := make([]byte, tb.InputNumber*TransactionSize+tb.OutputNumber*TransactionSize+2*1)
+	buf := make([]byte, int(tb.InputNumber)*TransactionSize+int(tb.OutputNumber)*TransactionSize+2*1)
 	buf[0] = tb.InputNumber
 	buf[1] = tb.OutputNumber
-	for i := uint8(0); i < tb.InputNumber; i++ {
+	for i := 0; i < int(tb.InputNumber); i++ {
 		copy(buf[2+i*TransactionSize:2+(i+1)*TransactionSize], tb.InputList[i][0:TransactionInputSize])
 	}
-	for i := uint8(0); i < tb.OutputNumber; i++ {
-		copy(buf[2+tb.InputNumber*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize], tb.OutputList[i][0:TransactionSize])
+	for i := 0; i < int(tb.OutputNumber); i++ {
+		copy(buf[2+int(tb.InputNumber)*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize], tb.OutputList[i][0:TransactionSize])
 	}
 	return buf[:]
 }
@@ -79,11 +82,11 @@ func DeserializeTransactionBlock(buf []byte) *TransactionBlock {
 	tb.OutputNumber = outputNumber
 	tb.InputList = make([][TransactionInputSize]byte, inputNumber)
 	tb.OutputList = make([][TransactionOutputSize]byte, outputNumber)
-	for i := uint8(0); i < tb.InputNumber; i++ {
+	for i := 0; i < int(tb.InputNumber); i++ {
 		copy(tb.InputList[i][0:TransactionInputSize], buf[2+i*TransactionInputSize:2+(i+1)*TransactionInputSize])
 	}
-	for i := uint8(0); i < tb.OutputNumber; i++ {
-		copy(tb.OutputList[i][0:TransactionSize], buf[2+tb.InputNumber*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize])
+	for i := 0; i < int(tb.OutputNumber); i++ {
+		copy(tb.OutputList[i][0:TransactionSize], buf[2+int(tb.InputNumber)*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize])
 	}
 	return tb
 }
@@ -101,7 +104,6 @@ func (tb *TransactionBlock) Hash() [32]byte {
 type TransactionInput struct {
 	VerificationChallenge [32]byte // signed by receiver
 	OutputBlock           TransactionOutput
-	//reference             *TransactionRef
 }
 
 // SerializeTransactionInput puts transaction into byte array
@@ -168,6 +170,16 @@ func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOut
 	copy(temp[0:TransactionRefSize], d[8+2*KeySize+32:8+2*KeySize+32+TransactionRefSize])
 	tx.reference = DeserializeTransactionRef(temp)
 	return tx
+}
+
+// SerializeTransactionRequest puts transaction into byte array
+func (tx *TransactionOutput) SerializeTransactionRequest() [TransactionRequestSize]byte {
+	var d [TransactionRequestSize]byte
+	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
+	copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
+	copy(d[8+KeySize:8+2*KeySize], tx.ReceiverPublicKey[0:KeySize])
+	copy(d[8+2*KeySize:8+2*KeySize+32], tx.Signature[0:32])
+	return d
 }
 
 // Hash generates hash of serialized transactionBlock

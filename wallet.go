@@ -9,14 +9,18 @@ type Wallet struct {
 	PrivateKey   [KeySize]byte
 	Transactions []TransactionRef
 	TotalUnspent uint64
+	Miner        *Miner
 }
 
 // InitializeWallet generates new empty wallet
 func InitializeWallet() *Wallet {
 	w := new(Wallet)
 	priv, pub := GenerateKeyPair()
+
 	w.PrivateKey = PrivateKeyToBytes(priv)
 	w.PublicKey = PublicKeyToBytes(pub)
+	//fmt.Printf("%x", w.PublicKey)
+
 	w.TotalUnspent = 0
 	w.Transactions = make([]TransactionRef, 0)
 	return w

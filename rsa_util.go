@@ -14,15 +14,16 @@ import (
 )
 
 // KeySize is used for all user keys
-const KeySize = 16
+const KeySize = 256
 
 // GenerateKeyPair generates a new key pair
 func GenerateKeyPair() (*rsa.PrivateKey, *rsa.PublicKey) {
-	privkey, err := rsa.GenerateKey(rand.Reader, KeySize)
+	privkey, err := rsa.GenerateKey(rand.Reader, KeySize*8)
 	if err != nil {
 		fmt.Println(err)
 
 	}
+	//fmt.Printf("%d", privkey.D)
 	return privkey, &privkey.PublicKey
 }
 
@@ -30,7 +31,7 @@ func GenerateKeyPair() (*rsa.PrivateKey, *rsa.PublicKey) {
 func PrivateKeyToBytes(priv *rsa.PrivateKey) [KeySize]byte {
 	privBytes := pem.EncodeToMemory(
 		&pem.Block{
-			Type:  "RSA PRIVATE KEY",
+			Type:  "",
 			Bytes: x509.MarshalPKCS1PrivateKey(priv),
 		},
 	)
@@ -48,7 +49,7 @@ func PublicKeyToBytes(pub *rsa.PublicKey) [KeySize]byte {
 	}
 
 	pubBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
+		Type:  "",
 		Bytes: pubASN1,
 	})
 	var output [KeySize]byte
@@ -134,6 +135,8 @@ func SignWithPrivateKey(hashed [32]byte, priv *rsa.PrivateKey) [32]byte {
 	if err != nil {
 		fmt.Println(err)
 	}
+
+	fmt.Printf("size of signature is %d\n", len(ciphertext))
 	var a [32]byte
 	copy(a[0:32], ciphertext[0:32])
 	return a
