@@ -21,6 +21,7 @@ type BlockChainNode struct {
 	NextBlockChainNode *BlockChainNode
 	Block              *Block
 	Hash               [32]byte
+	DataPointer        *TransactionBlock
 }
 
 // HasBlock determines whether block is in chain
@@ -29,8 +30,8 @@ func (bc *BlockChain) HasBlock(hash [32]byte) bool {
 	return ok
 }
 
-// GetBlockAtHeight returns block of main chain at specific height
-func (bc *BlockChain) GetBlockAtHeight(height uint32) *Block {
+// GetBlockChainNodeAtHeight returns block of main chain at specific height
+func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
 	current := bc.Head
 	max := current.Block.BlockCount
 	if height > max {
@@ -43,15 +44,23 @@ func (bc *BlockChain) GetBlockAtHeight(height uint32) *Block {
 
 	//fmt.Printf("requested %d, got %d", height, current.Block.BlockCount)
 
-	return current.Block
+	return current
 }
 
-// GetBlockAtHash fetches block
-func (bc *BlockChain) GetBlockAtHash(hash [32]byte) *Block {
+// GetBlockChainNodeAtHash fetches block
+func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
 	val, ok := bc.AllNodesMap[hash]
 	if ok {
-		return val.Block
+		return val
 	}
+
+	for _, obc := range bc.OrphanBlockChains {
+		val := obc.GetBlockChainNodeAtHash(hash)
+		if val != nil {
+			return val
+		}
+	}
+
 	return nil
 }
 

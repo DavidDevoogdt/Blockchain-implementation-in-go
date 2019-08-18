@@ -50,6 +50,43 @@ func DeserializeTransactionRef(ret [TransactionRefSize]byte) *TransactionRef {
 	return tr
 }
 
+//####################################
+
+// TransactionBlockNode keeps usefull information for serialization
+type TransactionBlockNode struct {
+	Hash             [32]byte
+	Parent           [32]byte
+	Length           uint64
+	TransactionBlock *TransactionBlock
+}
+
+//SerializeTransactionBlockNode makes transaction block ready for transmission
+func SerializeTransactionBlockNode(tb *TransactionBlock, Parent [32]byte) []byte {
+	tbn := new(TransactionBlockNode)
+	ser := tb.SerializeTransactionBlock()
+	tbn.Length = uint64(len(ser))
+	tbn.Hash = tb.Hash()
+	ret := make([]byte, 32+32+8+tbn.Length)
+	copy(ret[0:32], tbn.Hash[0:32])
+	copy(ret[32:64], tbn.Parent[0:32])
+	binary.LittleEndian.PutUint64(ret[64:72], tbn.Length)
+	copy(ret[72:72+tbn.Length], ser[:])
+	return ret
+}
+
+//DeserializeTransactionBlockNode makes transaction block ready for transmission
+func DeserializeTransactionBlockNode(ret []byte) *TransactionBlockNode {
+	tbn := new(TransactionBlockNode)
+
+	copy(tbn.Hash[0:32], ret[0:32])
+	copy(tbn.Parent[0:32], ret[32:64])
+	tbn.Length = binary.LittleEndian.Uint64(ret[64:72])
+	tbn.TransactionBlock = DeserializeTransactionBlock(ret[72 : 72+tbn.Length])
+	return tbn
+}
+
+//####################################
+
 // TransactionBlock groups transactions
 type TransactionBlock struct {
 	InputNumber  uint8

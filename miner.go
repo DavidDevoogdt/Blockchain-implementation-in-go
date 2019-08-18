@@ -103,14 +103,47 @@ func (m *Miner) ReceiveSend() {
 		switch ss.SendType {
 		case SendType["BlockHeader"]:
 			var a [BlockSize]byte
-			//fmt.Printf("data: %x\n", ss.data[:])
 			copy(a[0:BlockSize], ss.data[0:BlockSize])
 			bl := deSerialize(a)
-			//fmt.Printf("miner %s receiver request to add %.10x\n", m.Name, a)
 
 			if m.BlockChain.addBlockChainNode(bl) {
 				if m.isMining {
 					m.interrupt <- true
+				}
+			}
+		case SendType["BlockData"]:
+			tbn := DeserializeTransactionBlockNode(ss.data[:])
+
+			bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
+
+			if bcn != nil {
+				if tbn.Hash == bcn.Block.Data {
+					bcn.DataPointer = tbn.TransactionBlock
+				} else {
+					fmt.Printf("Received data of block with wrong Hash, not added")
+				}
+
+			}
+		case SendType["HeaderAndData"]:
+			var a [BlockSize]byte
+			copy(a[0:BlockSize], ss.data[0:BlockSize])
+			bl := deSerialize(a)
+
+			if m.BlockChain.addBlockChainNode(bl) {
+				if m.isMining {
+					m.interrupt <- true
+				}
+			}
+
+			tbn := DeserializeTransactionBlockNode(ss.data[BlockSize:])
+
+			bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
+
+			if bcn != nil {
+				if tbn.Hash == bcn.Block.Data {
+					bcn.DataPointer = tbn.TransactionBlock
+				} else {
+					fmt.Printf("Received data of block with wrong Hash, not added")
 				}
 
 			}
@@ -123,23 +156,31 @@ func (m *Miner) ReceiveSend() {
 // ReceiveRequest ...
 func (m *Miner) ReceiveRequest() {
 	for {
-		a := <-m.RequestChannel
-		//fmt.Printf("%x\n", a)
-		rq := DeserializeRequestStruct(a)
-
+		rq := DeserializeRequestStruct(<-m.RequestChannel)
 		switch rq.RequestType {
-		case SendType["BlockHeaderFromHash"]:
+		case RequestType["BlockHeaderFromHash"]:
 			var data [32]byte
 			copy(data[0:32], rq.data[0:32])
-			bl := m.BlockChain.GetBlockAtHash(data)
+			bl := m.BlockChain.GetBlockChainNodeAtHash(data)
 			//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
 
 			if bl != nil {
-				blData := bl.serialize()
+				blData := bl.Block.serialize()
 				go m.Broadcaster.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
 			}
+		case SendType["DataFromHash"]:
+			var hash [32]byte
+			copy(hash[0:32], rq.data[0:32])
+			bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
+			if bl != nil {
+				if bl.DataPointer != nil {
+					blData := bl.DataPointer.SerializeTransactionBlock()
+					go m.Broadcaster.Send(SendType["BlockData"], blData[:], m.Wallet.PublicKey, rq.Requester)
+				}
+			}
+		case SendType["Blockchain"]:
+			fmt.Printf("---------------------Blockchain request not implemented!")
 		}
-
 	}
 }
 
