@@ -3,6 +3,9 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"math/rand"
+	"sync"
+	"time"
 )
 
 // Everyone is shorthand for all subscribed receivers
@@ -15,14 +18,17 @@ type Miner struct {
 	FileName   string
 	BlockChain *BlockChain
 
-	ReceiveChannel chan []byte
-	RequestChannel chan []byte
-
-	Broadcaster *Broadcaster
-	interrupt   chan bool
+	NetworkChannel chan []byte
+	Broadcaster    *Broadcaster
+	interrupt      chan bool
 
 	Debug    bool
 	isMining bool
+
+	ReceivedData        map[[32]byte]bool
+	ReceivedDataMutex   sync.Mutex
+	ReceiveChannels     map[[32]byte]chan bool
+	ReceiveChannelMutex sync.Mutex
 }
 
 // CreateMiner initiates miner with given broadcaster and blockchain
@@ -30,23 +36,18 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 
 	m := new(Miner)
 	m.Name = name
-
 	m.Wallet = InitializeWallet()
-
 	m.BlockChain = DeSerializeBlockChain(blockChain)
-
 	m.Broadcaster = Broadcaster
-
-	m.ReceiveChannel = make(chan []byte)
-	m.RequestChannel = make(chan []byte)
-	m.Broadcaster.append(m.ReceiveChannel, m.RequestChannel, m.Wallet.PublicKey)
-
+	m.NetworkChannel = make(chan []byte)
+	m.ReceiveChannels = make(map[[32]byte]chan bool)
+	m.Broadcaster.append(m.NetworkChannel, m.Wallet.PublicKey)
 	m.BlockChain.Miner = m
 	m.interrupt = make(chan bool)
 	m.Debug = false
+	m.ReceivedData = make(map[[32]byte]bool)
 
-	go m.ReceiveSend()
-	go m.ReceiveRequest()
+	go m.ReceiveNetwork()
 
 	return m
 }
@@ -64,20 +65,16 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m := new(Miner)
 	m.Name = name
 	m.Wallet = InitializeWallet()
-
 	m.BlockChain = blockChain
 	m.Broadcaster = Broadcaster
-
-	m.ReceiveChannel = make(chan []byte)
-	m.RequestChannel = make(chan []byte)
-	m.Broadcaster.append(m.ReceiveChannel, m.RequestChannel, m.Wallet.PublicKey)
-
+	m.NetworkChannel = make(chan []byte)
+	m.ReceiveChannels = make(map[[32]byte]chan bool)
+	m.Broadcaster.append(m.NetworkChannel, m.Wallet.PublicKey)
 	m.interrupt = make(chan bool)
-	go m.ReceiveSend()
-	go m.ReceiveRequest()
-
 	m.Debug = false
+	m.ReceivedData = make(map[[32]byte]bool)
 
+	go m.ReceiveNetwork()
 	return m
 }
 
@@ -95,104 +92,9 @@ func (m *Miner) StartDebug() {
 	m.Debug = true
 }
 
-// ReceiveSend should be called once to receive blocks from broadcasters
-func (m *Miner) ReceiveSend() {
-	for {
-		ss := DeserializeSendStruct(<-m.ReceiveChannel)
-
-		switch ss.SendType {
-		case SendType["BlockHeader"]:
-			var a [BlockSize]byte
-			copy(a[0:BlockSize], ss.data[0:BlockSize])
-			bl := deSerialize(a)
-
-			if m.BlockChain.addBlockChainNode(bl) {
-				if m.isMining {
-					m.interrupt <- true
-				}
-			}
-		case SendType["BlockData"]:
-			tbn := DeserializeTransactionBlockNode(ss.data[:])
-
-			bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
-
-			if bcn != nil {
-				if tbn.Hash == bcn.Block.Data {
-					bcn.DataPointer = tbn.TransactionBlock
-				} else {
-					fmt.Printf("Received data of block with wrong Hash, not added")
-				}
-
-			}
-		case SendType["HeaderAndData"]:
-			var a [BlockSize]byte
-			copy(a[0:BlockSize], ss.data[0:BlockSize])
-			bl := deSerialize(a)
-
-			if m.BlockChain.addBlockChainNode(bl) {
-				if m.isMining {
-					m.interrupt <- true
-				}
-			}
-
-			tbn := DeserializeTransactionBlockNode(ss.data[BlockSize:])
-
-			bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
-
-			if bcn != nil {
-				if tbn.Hash == bcn.Block.Data {
-					bcn.DataPointer = tbn.TransactionBlock
-				} else {
-					fmt.Printf("Received data of block with wrong Hash, not added")
-				}
-
-			}
-
-		}
-
-	}
-}
-
-// ReceiveRequest ...
-func (m *Miner) ReceiveRequest() {
-	for {
-		rq := DeserializeRequestStruct(<-m.RequestChannel)
-		switch rq.RequestType {
-		case RequestType["BlockHeaderFromHash"]:
-			var data [32]byte
-			copy(data[0:32], rq.data[0:32])
-			bl := m.BlockChain.GetBlockChainNodeAtHash(data)
-			//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
-
-			if bl != nil {
-				blData := bl.Block.serialize()
-				go m.Broadcaster.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
-			}
-		case SendType["DataFromHash"]:
-			var hash [32]byte
-			copy(hash[0:32], rq.data[0:32])
-			bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
-			if bl != nil {
-				if bl.DataPointer != nil {
-					blData := bl.DataPointer.SerializeTransactionBlock()
-					go m.Broadcaster.Send(SendType["BlockData"], blData[:], m.Wallet.PublicKey, rq.Requester)
-				}
-			}
-		case SendType["Blockchain"]:
-			fmt.Printf("---------------------Blockchain request not implemented!")
-		}
-	}
-}
-
-// BroadcastBlock shorthand to broadcast block
-func (m *Miner) BroadcastBlock(blc *Block) {
-	data := blc.serialize()
-	m.Broadcaster.Send(SendType["BlockHeader"], data[:], m.Wallet.PublicKey, Everyone)
-}
-
 // RequestBlockFromHash makes request for block
 func (m *Miner) RequestBlockFromHash(hash [32]byte) {
-	m.Broadcaster.Request(RequestType["BlockHeaderFromHash"], m.Wallet.PublicKey, hash[:])
+	m.Request(RequestType["BlockHeaderFromHash"], m.Wallet.PublicKey, hash[:])
 }
 
 // MineBlock mines block and add own credentials
@@ -204,7 +106,7 @@ func (m *Miner) MineBlock(data string) *Block {
 	newBlock := new(Block)
 	newBlock.BlockCount = prevBlock.BlockCount + 1
 	newBlock.PrevHash = prevBlock.Hash()
-	newBlock.Nonce = 0
+	newBlock.Nonce = rand.Uint32()
 	newBlock.Data = sha256.Sum256([]byte(data))
 	newBlock.Difficulty = prevBlock.Difficulty
 
@@ -255,4 +157,221 @@ func (m *Miner) PrintHash(n int) {
 	m.BlockChain.PrintHash(n)
 	fmt.Printf("\n-----------------------------\n")
 
+}
+
+// Send broadcast block to everyone
+func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver [KeySize]byte) {
+	b := m.Broadcaster
+
+	ss := new(SendStruct)
+	ss.SendType = sendType
+	ss.length = uint64(len(data))
+	ss.data = data
+	a := ss.SerializeSendStruct()
+
+	rc, ok := b.Lookup[receiver]
+	sd, _ := b.Lookup[sender]
+
+	h := ss.ConfirmationHash()
+
+	confirmSend := func(c chan []byte) {
+		ll := make(chan bool)
+		cs := CreateConfirmationStruct(h, sender)
+
+		m.ReceiveChannelMutex.Lock()
+		m.ReceiveChannels[cs.response] = ll
+		m.ReceiveChannelMutex.Unlock()
+
+		c <- SerializeNetworkMessage(NetworkTypes["Confirmation"], cs.SerializeConfirmationStruct())
+		timer1 := time.NewTimer(2 * time.Second)
+		select {
+		case <-ll:
+			c <- SerializeNetworkMessage(NetworkTypes["Send"], a)
+		case <-timer1.C:
+			fmt.Printf("Rejected")
+		}
+
+		m.ReceiveChannelMutex.Lock()
+		delete(m.ReceiveChannels, cs.response)
+		m.ReceiveChannelMutex.Unlock()
+
+		close(ll)
+	}
+
+	if !ok { // receiver unknown or everyone
+		for _, c := range b.NetworkChannels {
+			if c != sd {
+				go confirmSend(c)
+				//c <- SerializeNetworkMessage(NetworkTypes["Send"], a)
+			}
+		}
+		return
+	}
+	go confirmSend(rc)
+	//rc <- SerializeNetworkMessage(NetworkTypes["Send"], a)
+}
+
+// Request broadcast request to everyone
+func (m *Miner) Request(RequestType uint8, Requester [KeySize]byte, data []byte) {
+	b := m.Broadcaster
+
+	rq := new(RequestStruct)
+	rq.RequestType = RequestType
+	copy(rq.Requester[0:KeySize], Requester[0:KeySize])
+	rq.length = uint64(len(data))
+	rq.data = make([]byte, rq.length)
+	copy(rq.data[0:rq.length], data[0:rq.length])
+
+	a := rq.SerializeRequestStruct()
+
+	//requester := b.Lookup[Requester]
+	for _, c := range b.NetworkChannels {
+		c <- SerializeNetworkMessage(NetworkTypes["Request"], a)
+	}
+
+}
+
+// ReceiveNetwork is only place where communication enters
+func (m *Miner) ReceiveNetwork() {
+	for {
+		networkType, msg := DeserializeNetworkMessage(<-m.NetworkChannel)
+		switch networkType {
+		case NetworkTypes["Send"]:
+			go m.ReceiveSend(msg)
+		case NetworkTypes["Request"]:
+			go m.ReceiveRequest(msg)
+		case NetworkTypes["Confirmation"]:
+			//fmt.Printf("Received request for confirmation")
+			cs := DeserializeConfirmationStruct(msg)
+			//val, _ := m.Broadcaster.Lookup[cs.sender]
+
+			//val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
+
+			m.ReceivedDataMutex.Lock()
+			_, ok := m.ReceivedData[cs.hash]
+			m.ReceivedDataMutex.Unlock()
+
+			if !ok { //haven't got data yet
+				val, ok2 := m.Broadcaster.Lookup[cs.sender]
+				if ok2 {
+					val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
+				}
+
+			}
+		case NetworkTypes["ConfirmationAccept"]:
+			//fmt.Printf("REceived confirmation, sending actual data")
+			var resp [32]byte
+			copy(resp[0:32], msg[0:32])
+
+			m.ReceiveChannelMutex.Lock()
+			c, ok := m.ReceiveChannels[resp]
+			m.ReceiveChannelMutex.Unlock()
+			//fmt.Printf("the sending if %x is %t", hash, ok)
+			if ok {
+				c <- true
+			}
+
+		}
+
+	}
+}
+
+// ReceiveSend should be called once to receive blocks from broadcasters
+func (m *Miner) ReceiveSend(msg []byte) {
+
+	ss := DeserializeSendStruct(msg)
+
+	dataHash := sha256.Sum256(ss.data[:])
+
+	m.ReceivedDataMutex.Lock()
+	m.ReceivedData[dataHash] = true
+	m.ReceivedDataMutex.Unlock()
+
+	switch ss.SendType {
+	case SendType["BlockHeader"]:
+		var a [BlockSize]byte
+		copy(a[0:BlockSize], ss.data[0:BlockSize])
+		bl := deSerialize(a)
+
+		if m.BlockChain.addBlockChainNode(bl) {
+			if m.isMining {
+				m.interrupt <- true
+			}
+		}
+	case SendType["BlockData"]:
+		tbn := DeserializeTransactionBlockNode(ss.data[:])
+
+		bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
+
+		if bcn != nil {
+			if tbn.Hash == bcn.Block.Data {
+				bcn.DataPointer = tbn.TransactionBlock
+			} else {
+				fmt.Printf("Received data of block with wrong Hash, not added")
+			}
+
+		}
+	case SendType["HeaderAndData"]:
+		var a [BlockSize]byte
+		copy(a[0:BlockSize], ss.data[0:BlockSize])
+		bl := deSerialize(a)
+
+		if m.BlockChain.addBlockChainNode(bl) {
+			if m.isMining {
+				m.interrupt <- true
+			}
+		}
+
+		tbn := DeserializeTransactionBlockNode(ss.data[BlockSize:])
+
+		bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
+
+		if bcn != nil {
+			if tbn.Hash == bcn.Block.Data {
+				bcn.DataPointer = tbn.TransactionBlock
+			} else {
+				fmt.Printf("Received data of block with wrong Hash, not added")
+			}
+
+		}
+
+	}
+
+}
+
+// ReceiveRequest ...
+func (m *Miner) ReceiveRequest(msg []byte) {
+
+	rq := DeserializeRequestStruct(msg)
+	switch rq.RequestType {
+	case RequestType["BlockHeaderFromHash"]:
+		var data [32]byte
+		copy(data[0:32], rq.data[0:32])
+		bl := m.BlockChain.GetBlockChainNodeAtHash(data)
+		//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
+
+		if bl != nil {
+			blData := bl.Block.serialize()
+			go m.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
+		}
+	case SendType["DataFromHash"]:
+		var hash [32]byte
+		copy(hash[0:32], rq.data[0:32])
+		bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
+		if bl != nil {
+			if bl.DataPointer != nil {
+				blData := bl.DataPointer.SerializeTransactionBlock()
+				go m.Send(SendType["BlockData"], blData[:], m.Wallet.PublicKey, rq.Requester)
+			}
+		}
+	case SendType["Blockchain"]:
+		fmt.Printf("---------------------Blockchain request not implemented!")
+	}
+
+}
+
+// BroadcastBlock shorthand to broadcast block
+func (m *Miner) BroadcastBlock(blc *Block) {
+	data := blc.serialize()
+	m.Send(SendType["BlockHeader"], data[:], m.Wallet.PublicKey, Everyone)
 }

@@ -12,15 +12,19 @@ func main() {
 	NumberOfMiners := 5
 
 	broadcaster := NewBroadcaster("receive Channel")
-
+	fmt.Printf("made broadcaster\n")
 	Miners := make([]*Miner, NumberOfMiners)
 
 	Miners[0] = BlockChainGenesis(3, broadcaster)
 
-	blc := Miners[0].MineBlock("genblock1")
+	fmt.Printf("made genesis miner\n")
 
-	Miners[0].BlockChain.addBlockChainNode(blc)
-	Miners[0].BroadcastBlock(blc)
+	//blc := Miners[0].MineBlock("genblock1")
+
+	//fmt.Printf("mined first block\n")
+
+	//Miners[0].BlockChain.addBlockChainNode(blc)
+	//Miners[0].BroadcastBlock(blc)
 
 	for i := 1; i < NumberOfMiners; i++ {
 		fmt.Printf("seting up miner %d\n", i)
@@ -38,7 +42,7 @@ func main() {
 			<-InsertMiner
 			m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 
-			m.StartDebug()
+			//m.StartDebug()
 			Miners = append(Miners, m)
 
 			//go m.MineContiniously()

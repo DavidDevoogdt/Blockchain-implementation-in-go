@@ -1,9 +1,33 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
+	"math/rand"
 )
+
+// NetworkTypes represents categories which can be send over a network
+var NetworkTypes = map[string]uint8{
+	"Request":            0,
+	"Send":               1,
+	"Confirmation":       2,
+	"ConfirmationAccept": 3,
+}
+
+// SerializeNetworkMessage wraps type around message
+func SerializeNetworkMessage(networkType uint8, message []byte) []byte {
+	return append(message[:], byte(networkType))
+}
+
+// DeserializeNetworkMessage wraps type around message
+func DeserializeNetworkMessage(networkMessage []byte) (uint8, []byte) {
+	length := len(networkMessage)
+	return networkMessage[length-1], networkMessage[0 : length-1]
+}
+
+//##################################
+
+//##################################
 
 // RequestType maps intended request to its number
 var RequestType = map[string]uint8{
@@ -44,7 +68,6 @@ func (rq *RequestStruct) SerializeRequestStruct() []byte {
 	ret[0] = rq.RequestType
 	binary.LittleEndian.PutUint64(ret[1:9], rq.length)
 	copy(ret[9:9+KeySize], rq.Requester[0:KeySize])
-	fmt.Printf("data %x\n", rq.data)
 	copy(ret[9+KeySize:9+KeySize+rqSize], rq.data[0:rqSize])
 	return ret
 }
@@ -71,12 +94,10 @@ type SendStruct struct {
 
 // SerializeSendStruct serialize send struct
 func (ss *SendStruct) SerializeSendStruct() []byte {
-
 	ret := make([]byte, 1+8+KeySize+ss.length)
 	ret[0] = ss.SendType
 	binary.LittleEndian.PutUint64(ret[1:9], ss.length)
 	copy(ret[9:9+KeySize], ss.Receiver[0:KeySize])
-
 	copy(ret[9+KeySize:9+KeySize+ss.length], ss.data[0:ss.length])
 	return ret
 }
@@ -94,13 +115,53 @@ func DeserializeSendStruct(ret []byte) *SendStruct {
 	return ss
 }
 
+// ConfirmationHash used to check whether receiver wants to receive
+func (ss *SendStruct) ConfirmationHash() [32]byte {
+	return sha256.Sum256(ss.data)
+}
+
+//########################################
+
+// ConfirmationStruct is networktype used for demanding confirmation before sending actual data
+type ConfirmationStruct struct {
+	hash     [32]byte
+	sender   [KeySize]byte
+	response [32]byte
+}
+
+//CreateConfirmationStruct inits cs
+func CreateConfirmationStruct(hash [32]byte, sender [KeySize]byte) *ConfirmationStruct {
+	cs := new(ConfirmationStruct)
+	cs.hash = hash
+	cs.sender = sender
+	rand.Read(cs.response[0:32])
+	return cs
+}
+
+// SerializeConfirmationStruct serializes
+func (cs *ConfirmationStruct) SerializeConfirmationStruct() []byte {
+	a := make([]byte, 2*32+KeySize)
+	copy(a[0:32], cs.hash[0:32])
+	copy(a[32:32+KeySize], cs.sender[0:KeySize])
+	copy(a[32+KeySize:32*2+KeySize], cs.response[0:32])
+	return a
+}
+
+// DeserializeConfirmationStruct deserializes
+func DeserializeConfirmationStruct(a []byte) *ConfirmationStruct {
+	cs := new(ConfirmationStruct)
+	copy(cs.hash[0:32], a[0:32])
+	copy(cs.sender[0:KeySize], a[32:32+KeySize])
+	copy(cs.response[0:32], a[32+KeySize:32*2+KeySize])
+	return cs
+}
+
 //########################################
 
 // Broadcaster groups subscribed miners
 type Broadcaster struct {
 	Lookup          map[[KeySize]byte]chan []byte
-	ReceiveChannels []chan []byte
-	RequestChannels []chan []byte
+	NetworkChannels []chan []byte
 	Name            string
 	Count           int
 }
@@ -110,63 +171,15 @@ func NewBroadcaster(name string) *Broadcaster {
 	bc := new(Broadcaster)
 	bc.Name = name
 	bc.Count = 0
-	bc.ReceiveChannels = make([]chan []byte, 0)
-	bc.RequestChannels = make([]chan []byte, 0)
+	bc.NetworkChannels = make([]chan []byte, 0)
 
 	bc.Lookup = make(map[[KeySize]byte]chan []byte)
 
 	return bc
 }
 
-func (b *Broadcaster) append(receive chan []byte, request chan []byte, address [KeySize]byte) {
-	b.ReceiveChannels = append(b.ReceiveChannels, receive)
-	b.RequestChannels = append(b.RequestChannels, request)
-	b.Lookup[address] = receive
+func (b *Broadcaster) append(network chan []byte, address [KeySize]byte) {
+	b.NetworkChannels = append(b.NetworkChannels, network)
+	b.Lookup[address] = network
 	b.Count++
-}
-
-// Send broadcast block to everyone
-func (b *Broadcaster) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver [KeySize]byte) {
-
-	ss := new(SendStruct)
-	ss.SendType = sendType
-	ss.length = uint64(len(data))
-	ss.data = data
-	a := ss.SerializeSendStruct()
-
-	rc, err := b.Lookup[receiver]
-	sd, err := b.Lookup[sender]
-
-	if err {
-		for _, c := range b.ReceiveChannels {
-			if c != sd {
-				c <- a
-			}
-
-		}
-		return
-	}
-
-	rc <- a
-}
-
-// Request broadcast request to everyone
-func (b *Broadcaster) Request(RequestType uint8, Requester [KeySize]byte, data []byte) {
-	//fmt.Printf("-------creating request for %x with hash %x", Requester, data)
-	rq := new(RequestStruct)
-	rq.RequestType = RequestType
-	copy(rq.Requester[0:KeySize], Requester[0:KeySize])
-	rq.length = uint64(len(data))
-	rq.data = make([]byte, rq.length)
-	copy(rq.data[0:rq.length], data[0:rq.length])
-
-	a := rq.SerializeRequestStruct()
-
-	//requester := b.Lookup[Requester]
-	for _, c := range b.RequestChannels {
-
-		c <- a
-
-	}
-
 }

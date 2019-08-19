@@ -2,17 +2,20 @@ package main
 
 import (
 	"fmt"
+	"sync"
 )
 
 // BlockChain is keeps track of known heads of tree
 type BlockChain struct {
-	Head              *BlockChainNode
-	Root              *BlockChainNode
-	AllNodesMap       map[[32]byte]*BlockChainNode
-	OtherHeadNodes    map[[32]byte]*BlockChainNode
-	Miner             *Miner
-	OrphanBlockChains []*BlockChain
-	IsOrphan          bool
+	Head                *BlockChainNode
+	Root                *BlockChainNode
+	AllNodesMap         map[[32]byte]*BlockChainNode
+	AllNodesMapMutex    sync.Mutex
+	OtherHeadNodes      map[[32]byte]*BlockChainNode
+	OtherHeadNodesMutex sync.Mutex
+	Miner               *Miner
+	OrphanBlockChains   []*BlockChain
+	IsOrphan            bool
 }
 
 // BlockChainNode links block to previous parent
@@ -26,7 +29,9 @@ type BlockChainNode struct {
 
 // HasBlock determines whether block is in chain
 func (bc *BlockChain) HasBlock(hash [32]byte) bool {
+	bc.AllNodesMapMutex.Lock()
 	_, ok := bc.AllNodesMap[hash]
+	bc.AllNodesMapMutex.Unlock()
 	return ok
 }
 
@@ -49,7 +54,10 @@ func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
 
 // GetBlockChainNodeAtHash fetches block
 func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
+	bc.AllNodesMapMutex.Lock()
 	val, ok := bc.AllNodesMap[hash]
+	bc.AllNodesMapMutex.Unlock()
+
 	if ok {
 		return val
 	}
@@ -80,7 +88,10 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 		return false
 	}
 
+	bc.AllNodesMapMutex.Lock()
 	_, nok := bc.AllNodesMap[block0.Hash()]
+	bc.AllNodesMapMutex.Unlock()
+
 	if nok {
 		bc.Miner.DebugPrint(fmt.Sprintf("%s-----already in chain\n", name))
 		return false
@@ -89,7 +100,9 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	_Hash := block0.Hash()
 	_PrevHash := block0.PrevHash
 
+	bc.AllNodesMapMutex.Lock()
 	prevBlock, ok := bc.AllNodesMap[_PrevHash]
+	bc.AllNodesMapMutex.Unlock()
 
 	if !ok {
 		//debug<- fmt.Sprintf("OOOOOOOOrphan: got %x with prehash %x", _Hash, _PrevHash)
@@ -111,7 +124,10 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				obc.Root.PrevBlockChainNode = newBCN
 				newBCN.NextBlockChainNode = obc.Root
 				obc.Root = newBCN
+
+				bc.AllNodesMapMutex.Lock()
 				obc.AllNodesMap[_Hash] = newBCN
+				bc.AllNodesMapMutex.Unlock()
 
 				//go bc.Miner.HashRequestBlock(block0.PrevHash)
 
@@ -134,7 +150,10 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	newBCN := new(BlockChainNode)
 	newBCN.Block = block0
 	newBCN.Hash = block0.Hash()
+
+	bc.AllNodesMapMutex.Lock()
 	bc.AllNodesMap[_Hash] = newBCN
+	bc.AllNodesMapMutex.Unlock()
 
 	newBCN.PrevBlockChainNode = prevBlock
 	prevBlock.NextBlockChainNode = newBCN
@@ -146,14 +165,20 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 			obc.Root.PrevBlockChainNode = newBCN
 
 			// delete prev node from head if that were the case
+
+			bc.OtherHeadNodesMutex.Lock()
 			delete(bc.OtherHeadNodes, _PrevHash)
 			//merge hashmaps
 			for k, v := range obc.OtherHeadNodes {
 				bc.OtherHeadNodes[k] = v
 			}
+			bc.OtherHeadNodesMutex.Unlock()
+
+			bc.AllNodesMapMutex.Lock()
 			for k, v := range obc.AllNodesMap {
 				bc.AllNodesMap[k] = v
 			}
+			bc.AllNodesMapMutex.Unlock()
 
 			// put orphaned blockchain to last element and remove it
 			l := len(bc.OrphanBlockChains)
@@ -163,14 +188,17 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 			mainHead := bc.Head
 			orphanHead := obc.Head
 			if orphanHead.Block.BlockCount > bc.Head.Block.BlockCount {
-
+				bc.OtherHeadNodesMutex.Lock()
 				bc.OtherHeadNodes[mainHead.Hash] = mainHead
+				bc.OtherHeadNodesMutex.Unlock()
 				bc.Head = orphanHead
 				bc.Miner.DebugPrint(fmt.Sprintf("%s-----orphaned chain is now main chain\n", name))
 				return true
 			}
 
+			bc.OtherHeadNodesMutex.Lock()
 			bc.OtherHeadNodes[orphanHead.Hash] = orphanHead
+			bc.OtherHeadNodesMutex.Unlock()
 			return false
 
 		}
@@ -178,12 +206,17 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 
 	//nothing special, just main chain
 	if prevBlock.Hash != bc.Head.Hash {
+		bc.OtherHeadNodesMutex.Lock()
 		_, ok = bc.OtherHeadNodes[_PrevHash]
+		bc.OtherHeadNodesMutex.Unlock()
 
 		if ok { ////non primary chain got longer, check whether new longest
 			if bc.Head.Block.BlockCount < block0.BlockCount { /////got new best
+				bc.OtherHeadNodesMutex.Lock()
 				bc.OtherHeadNodes[bc.Head.Hash] = bc.Head
 				delete(bc.OtherHeadNodes, block0.PrevHash)
+				bc.OtherHeadNodesMutex.Unlock()
+
 				bc.Head = newBCN
 				ptr := bc.Head
 				//set new chain for forward linked nodes
@@ -195,14 +228,18 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				return true
 			}
 
+			bc.OtherHeadNodesMutex.Lock()
 			delete(bc.OtherHeadNodes, block0.PrevHash)
 			bc.OtherHeadNodes[newBCN.Hash] = newBCN
+			bc.OtherHeadNodesMutex.Unlock()
 			bc.Miner.DebugPrint(fmt.Sprintf("-----block added to forked tree \n"))
 			return false
 
 		}
+		bc.OtherHeadNodesMutex.Lock()
 		delete(bc.OtherHeadNodes, block0.PrevHash)
 		bc.OtherHeadNodes[newBCN.Hash] = newBCN
+		bc.OtherHeadNodesMutex.Unlock()
 		bc.Miner.DebugPrint(fmt.Sprintf("-----new fork created \n"))
 		return false
 
