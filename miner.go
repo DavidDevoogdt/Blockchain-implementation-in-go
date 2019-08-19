@@ -134,7 +134,7 @@ func (m *Miner) MineContiniously() {
 		if blc == nil {
 			//fmt.Printf("%s was not fast enough \n", m.Name)
 		} else {
-			fmt.Printf("%s mined block: \n", m.Name)
+			//fmt.Printf("%s mined block: \n", m.Name)
 			m.BroadcastBlock(blc)
 			m.BlockChain.addBlockChainNode(blc)
 		}
@@ -159,7 +159,9 @@ func (m *Miner) PrintHash(n int) {
 
 }
 
-// Send broadcast block to everyone
+//############################################
+
+// Send broadcast block relevant addresses. Before transmitting the actual data, the receiver is requested to confirm whether he wants the data
 func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver [KeySize]byte) {
 	b := m.Broadcaster
 
@@ -188,7 +190,7 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 		case <-ll:
 			c <- SerializeNetworkMessage(NetworkTypes["Send"], a)
 		case <-timer1.C:
-			fmt.Printf("Rejected")
+			//fmt.Printf("Rejected")
 		}
 
 		m.ReceiveChannelMutex.Lock()
@@ -211,7 +213,7 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 	//rc <- SerializeNetworkMessage(NetworkTypes["Send"], a)
 }
 
-// Request broadcast request to everyone
+// Request broadcast a request to everyone
 func (m *Miner) Request(RequestType uint8, Requester [KeySize]byte, data []byte) {
 	b := m.Broadcaster
 
@@ -231,7 +233,9 @@ func (m *Miner) Request(RequestType uint8, Requester [KeySize]byte, data []byte)
 
 }
 
-// ReceiveNetwork is only place where communication enters
+//############################################
+
+// ReceiveNetwork decodes all the incoming network traffic. The request are transferred to the coresponding decoders
 func (m *Miner) ReceiveNetwork() {
 	for {
 		networkType, msg := DeserializeNetworkMessage(<-m.NetworkChannel)
@@ -241,32 +245,23 @@ func (m *Miner) ReceiveNetwork() {
 		case NetworkTypes["Request"]:
 			go m.ReceiveRequest(msg)
 		case NetworkTypes["Confirmation"]:
-			//fmt.Printf("Received request for confirmation")
 			cs := DeserializeConfirmationStruct(msg)
-			//val, _ := m.Broadcaster.Lookup[cs.sender]
-
-			//val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
 
 			m.ReceivedDataMutex.Lock()
 			_, ok := m.ReceivedData[cs.hash]
 			m.ReceivedDataMutex.Unlock()
-
-			if !ok { //haven't got data yet
+			if !ok {
 				val, ok2 := m.Broadcaster.Lookup[cs.sender]
 				if ok2 {
 					val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
 				}
-
 			}
 		case NetworkTypes["ConfirmationAccept"]:
-			//fmt.Printf("REceived confirmation, sending actual data")
 			var resp [32]byte
 			copy(resp[0:32], msg[0:32])
-
 			m.ReceiveChannelMutex.Lock()
 			c, ok := m.ReceiveChannels[resp]
 			m.ReceiveChannelMutex.Unlock()
-			//fmt.Printf("the sending if %x is %t", hash, ok)
 			if ok {
 				c <- true
 			}
@@ -276,7 +271,7 @@ func (m *Miner) ReceiveNetwork() {
 	}
 }
 
-// ReceiveSend should be called once to receive blocks from broadcasters
+// ReceiveSend decodes the sent data and updates internal structure with the new dat
 func (m *Miner) ReceiveSend(msg []byte) {
 
 	ss := DeserializeSendStruct(msg)
@@ -291,7 +286,7 @@ func (m *Miner) ReceiveSend(msg []byte) {
 	case SendType["BlockHeader"]:
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
-		bl := deSerialize(a)
+		bl := DeserializeBlock(a)
 
 		if m.BlockChain.addBlockChainNode(bl) {
 			if m.isMining {
@@ -314,7 +309,7 @@ func (m *Miner) ReceiveSend(msg []byte) {
 	case SendType["HeaderAndData"]:
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
-		bl := deSerialize(a)
+		bl := DeserializeBlock(a)
 
 		if m.BlockChain.addBlockChainNode(bl) {
 			if m.isMining {
@@ -323,7 +318,6 @@ func (m *Miner) ReceiveSend(msg []byte) {
 		}
 
 		tbn := DeserializeTransactionBlockNode(ss.data[BlockSize:])
-
 		bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
 
 		if bcn != nil {
@@ -332,16 +326,17 @@ func (m *Miner) ReceiveSend(msg []byte) {
 			} else {
 				fmt.Printf("Received data of block with wrong Hash, not added")
 			}
-
 		}
+	case SendType["TransactionBlock"]:
+		//tx := DeserializeTransactionBlock(ss.data)
+		fmt.Printf("todo: implement this")
 
 	}
 
 }
 
-// ReceiveRequest ...
+// ReceiveRequest decodes the request and tries to service the request if possible
 func (m *Miner) ReceiveRequest(msg []byte) {
-
 	rq := DeserializeRequestStruct(msg)
 	switch rq.RequestType {
 	case RequestType["BlockHeaderFromHash"]:
@@ -351,7 +346,7 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 		//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
 
 		if bl != nil {
-			blData := bl.Block.serialize()
+			blData := bl.Block.SerializeBlock()
 			go m.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
 		}
 	case SendType["DataFromHash"]:
@@ -372,6 +367,6 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 
 // BroadcastBlock shorthand to broadcast block
 func (m *Miner) BroadcastBlock(blc *Block) {
-	data := blc.serialize()
+	data := blc.SerializeBlock()
 	m.Send(SendType["BlockHeader"], data[:], m.Wallet.PublicKey, Everyone)
 }

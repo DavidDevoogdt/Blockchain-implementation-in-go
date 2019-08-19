@@ -7,15 +7,17 @@ import (
 
 // BlockChain is keeps track of known heads of tree
 type BlockChain struct {
-	Head                *BlockChainNode
-	Root                *BlockChainNode
+	Head *BlockChainNode
+	Root *BlockChainNode
+
 	AllNodesMap         map[[32]byte]*BlockChainNode
 	AllNodesMapMutex    sync.Mutex
 	OtherHeadNodes      map[[32]byte]*BlockChainNode
 	OtherHeadNodesMutex sync.Mutex
-	Miner               *Miner
-	OrphanBlockChains   []*BlockChain
-	IsOrphan            bool
+
+	Miner             *Miner
+	OrphanBlockChains []*BlockChain
+	IsOrphan          bool
 }
 
 // BlockChainNode links block to previous parent
@@ -334,7 +336,7 @@ func (bc *BlockChain) SerializeBlockChain() [][BlockSize]byte {
 	current := bc.Head
 	ret := make([][BlockSize]byte, current.Block.BlockCount+1)
 	for {
-		ret[current.Block.BlockCount] = current.Block.serialize()
+		ret[current.Block.BlockCount] = current.Block.SerializeBlock()
 		if current.Block.BlockCount != 0 {
 			current = current.PrevBlockChainNode
 		} else {
@@ -364,7 +366,7 @@ func DeSerializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 	//first block
 
 	for _, bl := range bc[:] {
-		blockChain.addBlockChainNode(deSerialize(bl))
+		blockChain.addBlockChainNode(DeserializeBlock(bl))
 	}
 
 	return blockChain

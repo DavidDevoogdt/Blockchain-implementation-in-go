@@ -24,7 +24,8 @@ type Block struct {
 // BlockSize size of serialized struct
 const BlockSize = 76
 
-func (b *Block) preHash() [BlockSize]byte {
+// SerializeBlock serialize the content of the block
+func (b *Block) SerializeBlock() [BlockSize]byte {
 	var d [BlockSize]byte
 	copy(d[0:32], b.Data[0:32])
 	copy(d[32:64], b.PrevHash[0:32])
@@ -34,12 +35,8 @@ func (b *Block) preHash() [BlockSize]byte {
 	return d
 }
 
-func (b *Block) serialize() [BlockSize]byte {
-
-	return b.preHash()
-}
-
-func deSerialize(d [BlockSize]byte) *Block {
+// DeserializeBlock does the inverse of SerializeBlock
+func DeserializeBlock(d [BlockSize]byte) *Block {
 	b := new(Block)
 	copy(b.Data[0:32], d[0:32])
 	copy(b.PrevHash[0:32], d[32:64])
@@ -51,7 +48,7 @@ func deSerialize(d [BlockSize]byte) *Block {
 
 // Hash gets block hash
 func (b *Block) Hash() [32]byte {
-	a := b.preHash()
+	a := b.SerializeBlock()
 	return sha256.Sum256(a[:])
 }
 

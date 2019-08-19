@@ -27,8 +27,6 @@ func DeserializeNetworkMessage(networkMessage []byte) (uint8, []byte) {
 
 //##################################
 
-//##################################
-
 // RequestType maps intended request to its number
 var RequestType = map[string]uint8{
 	"BlockHeaderFromHash":   0,
@@ -47,10 +45,11 @@ var RequestTypeSize = map[uint8]uint16{ //size of data
 
 // SendType maps the int to a human readable type
 var SendType = map[string]uint8{
-	"BlockHeader":   0,
-	"BlockData":     1,
-	"Blockchain":    2,
-	"HeaderAndData": 3,
+	"BlockHeader":      0,
+	"BlockData":        1,
+	"Blockchain":       2,
+	"HeaderAndData":    3,
+	"TransactionBlock": 4,
 }
 
 // RequestStruct is dummy type to create request
