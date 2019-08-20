@@ -1,4 +1,4 @@
-package main
+package davidcoin
 
 import (
 	"crypto/sha256"
@@ -6,7 +6,7 @@ import (
 )
 
 // TransactionRefSize is size of a reference tor a transaction in the blockchain
-const TransactionRefSize = 34
+const TransactionRefSize = 33
 
 // TransactionInputSize is len of a transaction input
 const TransactionInputSize = 32 + TransactionRefSize
@@ -21,7 +21,6 @@ const TransactionRequestSize = 8 + 32 + 2*KeySize
 type TransactionRef struct {
 	BlockHash [32]byte
 	Number    uint8
-	IsOutput  bool
 }
 
 // SerializeTransactionRef serializes transaction
@@ -29,11 +28,6 @@ func (tr *TransactionRef) SerializeTransactionRef() [TransactionRefSize]byte {
 	var ret [TransactionRefSize]byte
 	copy(ret[0:32], tr.BlockHash[0:32])
 	ret[32] = tr.Number
-	if tr.IsOutput {
-		ret[33] = 1
-		return ret
-	}
-	ret[33] = 0
 	return ret
 }
 
@@ -42,11 +36,6 @@ func DeserializeTransactionRef(ret [TransactionRefSize]byte) *TransactionRef {
 	tr := new(TransactionRef)
 	copy(tr.BlockHash[0:32], ret[0:32])
 	tr.Number = ret[32]
-	if ret[33] == 1 {
-		tr.IsOutput = true
-		return tr
-	}
-	tr.IsOutput = false
 	return tr
 }
 
@@ -91,8 +80,10 @@ func DeserializeTransactionBlockNode(ret []byte) *TransactionBlockNode {
 type TransactionBlock struct {
 	InputNumber  uint8
 	OutputNumber uint8
-	InputList    [][TransactionInputSize]byte
-	OutputList   [][TransactionOutputSize]byte
+	InputList    []*TransactionInput
+	OutputList   []*TransactionOutput
+	//InputList    [][TransactionInputSize]byte
+	//OutputList   [][TransactionOutputSize]byte
 }
 
 // SerializeTransactionBlock serializes transactionblock
@@ -102,10 +93,12 @@ func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 	buf[0] = tb.InputNumber
 	buf[1] = tb.OutputNumber
 	for i := 0; i < int(tb.InputNumber); i++ {
-		copy(buf[2+i*TransactionSize:2+(i+1)*TransactionSize], tb.InputList[i][0:TransactionInputSize])
+		a := tb.InputList[i].SerializeTransactionInput()
+		copy(buf[2+i*TransactionSize:2+(i+1)*TransactionSize], a[0:TransactionInputSize])
 	}
 	for i := 0; i < int(tb.OutputNumber); i++ {
-		copy(buf[2+int(tb.InputNumber)*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize], tb.OutputList[i][0:TransactionSize])
+		a := tb.OutputList[i].SerializeTransactionOutput()
+		copy(buf[2+int(tb.InputNumber)*TransactionInputSize+i*TransactionOutputSize:2+int(tb.InputNumber)*TransactionInputSize+(i+1)*TransactionOutputSize], a[0:TransactionOutputSize])
 	}
 	return buf[:]
 }
@@ -117,13 +110,18 @@ func DeserializeTransactionBlock(buf []byte) *TransactionBlock {
 	outputNumber := uint8(buf[1])
 	tb.InputNumber = inputNumber
 	tb.OutputNumber = outputNumber
-	tb.InputList = make([][TransactionInputSize]byte, inputNumber)
-	tb.OutputList = make([][TransactionOutputSize]byte, outputNumber)
+	tb.InputList = make([]*TransactionInput, inputNumber)
+	tb.OutputList = make([]*TransactionOutput, outputNumber)
 	for i := 0; i < int(tb.InputNumber); i++ {
-		copy(tb.InputList[i][0:TransactionInputSize], buf[2+i*TransactionInputSize:2+(i+1)*TransactionInputSize])
+		var b [TransactionInputSize]byte
+		copy(b[0:TransactionInputSize], buf[2+i*TransactionInputSize:2+(i+1)*TransactionInputSize])
+		tb.InputList[i] = DeserializeTransactionInput(b)
 	}
 	for i := 0; i < int(tb.OutputNumber); i++ {
-		copy(tb.OutputList[i][0:TransactionSize], buf[2+int(tb.InputNumber)*TransactionSize+i*TransactionSize:2+(i+1)*TransactionSize])
+		var b [TransactionOutputSize]byte
+		copy(b[0:TransactionOutputSize], buf[2+int(tb.InputNumber)*TransactionInputSize+i*TransactionOutputSize:2+int(tb.InputNumber)*TransactionInputSize+(i+1)*TransactionOutputSize])
+
+		tb.OutputList[i] = DeserializeTransactionOutput(b)
 	}
 	return tb
 }
@@ -140,7 +138,7 @@ func (tb *TransactionBlock) Hash() [32]byte {
 // TransactionInput is a input transaction (reference to previous output and proof )
 type TransactionInput struct {
 	VerificationChallenge [32]byte // signed by receiver
-	OutputBlock           TransactionOutput
+	OutputBlock           *TransactionOutput
 }
 
 // SerializeTransactionInput puts transaction into byte array

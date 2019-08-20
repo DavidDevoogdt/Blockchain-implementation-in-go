@@ -1,4 +1,4 @@
-package main
+package davidcoin
 
 import (
 	"fmt"
@@ -22,11 +22,13 @@ type BlockChain struct {
 
 // BlockChainNode links block to previous parent
 type BlockChainNode struct {
-	PrevBlockChainNode *BlockChainNode
-	NextBlockChainNode *BlockChainNode
-	Block              *Block
-	Hash               [32]byte
-	DataPointer        *TransactionBlock
+	PrevBlockChainNode    *BlockChainNode
+	NextBlockChainNode    *BlockChainNode
+	Block                 *Block
+	Hash                  [32]byte
+	DataPointer           *TransactionBlock
+	UTxOManagerPointer    *UTxOManager
+	UTxOManagerIsUpToDate bool
 }
 
 // HasBlock determines whether block is in chain

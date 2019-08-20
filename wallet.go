@@ -1,4 +1,4 @@
-package main
+package davidcoin
 
 // TransactionSize is len of a transaction
 const TransactionSize = 8 + 8 + 2*KeySize + 32

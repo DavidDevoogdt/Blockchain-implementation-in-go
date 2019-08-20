@@ -1,4 +1,4 @@
-package main
+package davidcoin
 
 import (
 	"crypto/sha256"
@@ -134,7 +134,7 @@ func (m *Miner) MineContiniously() {
 		if blc == nil {
 			//fmt.Printf("%s was not fast enough \n", m.Name)
 		} else {
-			//fmt.Printf("%s mined block: \n", m.Name)
+			//fmt.Printf("%s mined block: \n", m.kName)
 			m.BroadcastBlock(blc)
 			m.BlockChain.addBlockChainNode(blc)
 		}
