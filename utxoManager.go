@@ -1,4 +1,4 @@
-package davidcoin
+package main
 
 import (
 	"fmt"
@@ -11,7 +11,18 @@ type UTxOManager struct {
 	UtxOMap                map[[32]byte]map[uint8]bool
 	mapMutex               sync.RWMutex
 	secondLayerMutexes     [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block number. This is lightweight and still faster than using a single mutex for all
+	Miner                  *Miner
+}
 
+// InitializeUTxOMananger is used to initialize the blockchain
+func InitializeUTxOMananger(m *Miner) *UTxOManager {
+	utxo := new(UTxOManager)
+	utxo.UtxOMap = make(map[[32]byte]map[uint8]bool)
+	utxo.Miner = m
+	utxo.attachedBlockChainNode = m.BlockChain.Root
+	utxo.attachedBlockChainNode.HasData = false
+	utxo.attachedBlockChainNode.UTxOManagerIsUpToDate = true
+	return utxo
 }
 
 // VerifyTransactionRef checks whether a transactionref is spendable
@@ -39,7 +50,8 @@ func (um *UTxOManager) VerifyTransactionRef(tr *TransactionRef) bool {
 // VerifyTransactionBlockRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
 func (um *UTxOManager) VerifyTransactionBlockRefs(tb *TransactionBlock) bool {
 	for _, b := range tb.InputList[:] {
-		if !um.VerifyTransactionRef(b.OutputBlock.reference) {
+
+		if !um.VerifyTransactionRef(b.reference) {
 			return false
 		}
 	}
@@ -84,7 +96,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	for i := range tb.InputList {
 		txInput := tb.InputList[i]
 		go func() {
-			tr := txInput.OutputBlock.reference
+			tr := txInput.reference
 			um.mapMutex.RLock()
 			a, ok := um.UtxOMap[tr.BlockHash]
 			um.mapMutex.RUnlock()
@@ -113,27 +125,24 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	}
 
 	um.mapMutex.RLock()
-	a, ok := um.UtxOMap[tb.OutputList[0].reference.BlockHash]
+	a, ok := um.UtxOMap[bcn.Hash]
 	um.mapMutex.RUnlock()
 
 	if !ok {
-		a := make(map[uint8]bool)
+		a = make(map[uint8]bool)
 		um.mapMutex.Lock()
-		um.UtxOMap[tb.OutputList[0].reference.BlockHash] = a
+		um.UtxOMap[bcn.Hash] = a
 		um.mapMutex.Unlock()
 	}
 
 	for i := range tb.OutputList {
-		txOutput := tb.OutputList[i]
-		go func() {
-			tr := txOutput.reference
-
-			um.secondLayerMutexes[tr.Number].Lock()
-			a[tr.Number] = true
-			um.secondLayerMutexes[tr.Number].Unlock()
+		go func(i uint8) {
+			um.secondLayerMutexes[i].Lock()
+			a[i] = true
+			um.secondLayerMutexes[i].Unlock()
 
 			waitGroup.Done()
-		}()
+		}(uint8(i))
 	}
 
 	waitGroup.Wait()

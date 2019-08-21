@@ -1,8 +1,9 @@
-package davidcoin
+package main
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 )
 
 // TransactionRefSize is size of a reference tor a transaction in the blockchain
@@ -12,7 +13,7 @@ const TransactionRefSize = 33
 const TransactionInputSize = 32 + TransactionRefSize
 
 // TransactionOutputSize is len of a transaction output
-const TransactionOutputSize = 8 + 32 + 2*KeySize + TransactionRefSize
+const TransactionOutputSize = 8 + 32 + 2*KeySize
 
 // TransactionRequestSize is len of a transaction request
 const TransactionRequestSize = 8 + 32 + 2*KeySize
@@ -63,14 +64,14 @@ func SerializeTransactionBlockNode(tb *TransactionBlock, Parent [32]byte) []byte
 	return ret
 }
 
-//DeserializeTransactionBlockNode makes transaction block ready for transmission
-func DeserializeTransactionBlockNode(ret []byte) *TransactionBlockNode {
+//DeserializeTransactionBlockNode makes transaction block ready for transmission. Blockchain is used to recover pointer to actual data, not reference
+func DeserializeTransactionBlockNode(ret []byte, bc *BlockChain) *TransactionBlockNode {
 	tbn := new(TransactionBlockNode)
 
 	copy(tbn.Hash[0:32], ret[0:32])
 	copy(tbn.Parent[0:32], ret[32:64])
 	tbn.Length = binary.LittleEndian.Uint64(ret[64:72])
-	tbn.TransactionBlock = DeserializeTransactionBlock(ret[72 : 72+tbn.Length])
+	tbn.TransactionBlock = DeserializeTransactionBlock(ret[72:72+tbn.Length], bc)
 	return tbn
 }
 
@@ -84,6 +85,22 @@ type TransactionBlock struct {
 	OutputList   []*TransactionOutput
 	//InputList    [][TransactionInputSize]byte
 	//OutputList   [][TransactionOutputSize]byte
+}
+
+// InitializeTransactionBlock setups basic stuff in transactionblock
+func InitializeTransactionBlock() *TransactionBlock {
+	tb := new(TransactionBlock)
+	tb.InputNumber = 0
+	tb.OutputNumber = 0
+	tb.InputList = make([]*TransactionInput, 0)
+	tb.OutputList = make([]*TransactionOutput, 0)
+	return tb
+}
+
+// AddOutput ads outp to list
+func (tb *TransactionBlock) AddOutput(to *TransactionOutput) {
+	tb.OutputList = append(tb.OutputList, to)
+	tb.OutputNumber++
 }
 
 // SerializeTransactionBlock serializes transactionblock
@@ -103,8 +120,8 @@ func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 	return buf[:]
 }
 
-// DeserializeTransactionBlock does the inverse of serialize
-func DeserializeTransactionBlock(buf []byte) *TransactionBlock {
+// DeserializeTransactionBlock does the inverse of serialize. The Blockchain is used to recover pointer to dataoutput instead of reference struct
+func DeserializeTransactionBlock(buf []byte, bc *BlockChain) *TransactionBlock {
 	tb := new(TransactionBlock)
 	inputNumber := uint8(buf[0])
 	outputNumber := uint8(buf[1])
@@ -115,7 +132,7 @@ func DeserializeTransactionBlock(buf []byte) *TransactionBlock {
 	for i := 0; i < int(tb.InputNumber); i++ {
 		var b [TransactionInputSize]byte
 		copy(b[0:TransactionInputSize], buf[2+i*TransactionInputSize:2+(i+1)*TransactionInputSize])
-		tb.InputList[i] = DeserializeTransactionInput(b)
+		tb.InputList[i] = DeserializeTransactionInput(b, bc)
 	}
 	for i := 0; i < int(tb.OutputNumber); i++ {
 		var b [TransactionOutputSize]byte
@@ -124,6 +141,12 @@ func DeserializeTransactionBlock(buf []byte) *TransactionBlock {
 		tb.OutputList[i] = DeserializeTransactionOutput(b)
 	}
 	return tb
+}
+
+// VerifyInputSignatures is necessary to check whether the coins really belong to the spender
+func (tb *TransactionBlock) VerifyInputSignatures() bool {
+	fmt.Printf("todo verify input signatures")
+	return true
 }
 
 // Hash generates hash of serialized transactionBlock
@@ -137,26 +160,28 @@ func (tb *TransactionBlock) Hash() [32]byte {
 
 // TransactionInput is a input transaction (reference to previous output and proof )
 type TransactionInput struct {
-	VerificationChallenge [32]byte // signed by receiver
-	OutputBlock           *TransactionOutput
+	VerificationChallenge [32]byte           // signed by receiver
+	OutputBlock           *TransactionOutput //not serialized
+	reference             *TransactionRef    // where this block is stored in chain
 }
 
 // SerializeTransactionInput puts transaction into byte array
 func (tx *TransactionInput) SerializeTransactionInput() [TransactionInputSize]byte {
 	var d [TransactionInputSize]byte
 	copy(d[0:32], tx.VerificationChallenge[0:32])
-	temp := tx.OutputBlock.reference.SerializeTransactionRef()
+	temp := tx.reference.SerializeTransactionRef()
 	copy(d[32:32+TransactionRefSize], temp[0:TransactionRefSize])
 	return d
 }
 
-// DeserializeTransactionInput turns it back into struct
-func DeserializeTransactionInput(d [TransactionInputSize]byte) *TransactionInput {
+// DeserializeTransactionInput turns it back into struct. blockchain is used to recover pointer to data
+func DeserializeTransactionInput(d [TransactionInputSize]byte, bc *BlockChain) *TransactionInput {
 	tx := new(TransactionInput)
 	copy(tx.VerificationChallenge[0:32], d[0:32])
 	var o [TransactionRefSize]byte
 	copy(o[0:TransactionRefSize], d[32:32+TransactionRefSize])
-	tx.OutputBlock.reference = DeserializeTransactionRef(o)
+	tx.reference = DeserializeTransactionRef(o)
+	tx.OutputBlock = bc.GetTransactionOutput(tx.reference)
 	return tx
 }
 
@@ -179,7 +204,6 @@ type TransactionOutput struct {
 	Signature         [32]byte //payer signature
 	PayerPublicKey    [KeySize]byte
 	ReceiverPublicKey [KeySize]byte
-	reference         *TransactionRef // where this block is stored in chain
 }
 
 // SerializeTransactionOutput puts transaction into byte array
@@ -189,8 +213,7 @@ func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize
 	copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
 	copy(d[8+KeySize:8+2*KeySize], tx.ReceiverPublicKey[0:KeySize])
 	copy(d[8+2*KeySize:8+2*KeySize+32], tx.Signature[0:32])
-	temp := tx.reference.SerializeTransactionRef()
-	copy(d[8+2*KeySize+32:8+2*KeySize+32+TransactionRefSize], temp[0:TransactionRefSize])
+
 	return d
 }
 
@@ -201,9 +224,6 @@ func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOut
 	copy(tx.PayerPublicKey[0:KeySize], d[8:8+KeySize])
 	copy(tx.ReceiverPublicKey[0:KeySize], d[8+KeySize:8+2*KeySize])
 	copy(tx.Signature[0:32], d[8+2*KeySize:8+2*KeySize+32])
-	var temp [TransactionRefSize]byte
-	copy(temp[0:TransactionRefSize], d[8+2*KeySize+32:8+2*KeySize+32+TransactionRefSize])
-	tx.reference = DeserializeTransactionRef(temp)
 	return tx
 }
 

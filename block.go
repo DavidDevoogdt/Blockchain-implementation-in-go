@@ -1,4 +1,4 @@
-package davidcoin
+package main
 
 import (
 	"bytes"

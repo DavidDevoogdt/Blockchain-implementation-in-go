@@ -1,4 +1,4 @@
-package davidcoin
+package main
 
 import (
 	"crypto/sha256"
@@ -31,6 +31,8 @@ type Miner struct {
 	ReceiveChannelMutex sync.Mutex
 }
 
+//###################one time init###################
+
 // CreateMiner initiates miner with given broadcaster and blockchain
 func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]byte) *Miner {
 
@@ -46,6 +48,9 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	m.interrupt = make(chan bool)
 	m.Debug = false
 	m.ReceivedData = make(map[[32]byte]bool)
+	m.BlockChain.Root.UTxOManagerPointer = InitializeUTxOMananger(m)
+	m.BlockChain.Root.UTxOManagerIsUpToDate = true
+	InitializeUTxOMananger(m)
 
 	go m.ReceiveNetwork()
 
@@ -66,6 +71,7 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.Name = name
 	m.Wallet = InitializeWallet()
 	m.BlockChain = blockChain
+	m.BlockChain.Root.UTxOManagerPointer = InitializeUTxOMananger(m)
 	m.Broadcaster = Broadcaster
 	m.NetworkChannel = make(chan []byte)
 	m.ReceiveChannels = make(map[[32]byte]chan bool)
@@ -74,17 +80,10 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.Debug = false
 	m.ReceivedData = make(map[[32]byte]bool)
 
+	InitializeUTxOMananger(m)
+
 	go m.ReceiveNetwork()
 	return m
-}
-
-//DebugPrint print if debug is on
-func (m *Miner) DebugPrint(msg string) {
-	if m != nil {
-		if m.Debug {
-			fmt.Printf(msg)
-		}
-	}
 }
 
 // StartDebug starts debug logging
@@ -92,34 +91,23 @@ func (m *Miner) StartDebug() {
 	m.Debug = true
 }
 
-// RequestBlockFromHash makes request for block
-func (m *Miner) RequestBlockFromHash(hash [32]byte) {
-	m.Request(RequestType["BlockHeaderFromHash"], m.Wallet.PublicKey, hash[:])
-}
+//###############actual mining #######################""
 
 // MineBlock mines block and add own credentials
-func (m *Miner) MineBlock(data string) *Block {
+func (m *Miner) MineBlock(newBlock *Block) *Block {
 	m.isMining = true
-	//fmt.Printf("%s started mining %s\n", m.Name, data)
-	prevBlock := m.BlockChain.Head.Block
-
-	newBlock := new(Block)
-	newBlock.BlockCount = prevBlock.BlockCount + 1
-	newBlock.PrevHash = prevBlock.Hash()
-	newBlock.Nonce = rand.Uint32()
-	newBlock.Data = sha256.Sum256([]byte(data))
-	newBlock.Difficulty = prevBlock.Difficulty
+	defer func() {
+		m.isMining = false
+	}()
 
 	for {
 		select {
 		case <-m.interrupt:
-			m.isMining = false
 			return nil
 		default:
 			if compHash(newBlock.Difficulty, newBlock.Hash()) {
-
-				m.isMining = false
 				return newBlock
+
 			}
 			newBlock.Nonce++
 		}
@@ -129,14 +117,91 @@ func (m *Miner) MineBlock(data string) *Block {
 // MineContiniously does what it says
 func (m *Miner) MineContiniously() {
 	for {
-		blc := m.MineBlock(fmt.Sprintf("dit is blok nr %d", m.BlockChain.Head.Block.BlockCount))
-		//print(blc)
-		if blc == nil {
-			//fmt.Printf("%s was not fast enough \n", m.Name)
-		} else {
-			//fmt.Printf("%s mined block: \n", m.kName)
-			m.BroadcastBlock(blc)
-			m.BlockChain.addBlockChainNode(blc)
+		tb := InitializeTransactionBlock()
+		tb.AddOutput(&TransactionOutput{Amount: 1e18, ReceiverPublicKey: m.Wallet.PublicKey})
+
+		prepBlock := m.PrepareBlockForMining(tb)
+
+		if prepBlock != nil {
+			blc := m.MineBlock(prepBlock)
+			//print(blc)
+			if blc == nil {
+				//fmt.Printf("%s was not fast enough \n", m.Name)
+			} else {
+				m.DebugPrint(fmt.Sprintf("%s mined block: \n", m.Name))
+				m.BlockChain.addBlockChainNode(blc)
+
+				m.BlockChain.AllNodesMapMutex.Lock()
+				val, ok := m.BlockChain.AllNodesMap[blc.Hash()]
+				m.BlockChain.AllNodesMapMutex.Unlock()
+				if !ok {
+					m.DebugPrint("Block just added but not in chain, serious error")
+				}
+
+				val.HasData = true
+				val.DataPointer = tb
+
+				m.BroadcastBlock(blc)
+			}
+
+		}
+	}
+}
+
+// PrepareBlockForMining takes transactiondata and builds a block suitable for mining
+func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
+
+	head := m.BlockChain.Head
+
+	newHash := data.Hash()
+
+	if !head.UTxOManagerIsUpToDate {
+		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning"))
+		m.BlockChain.VerifyAndBuildDown(head)
+		return nil
+	}
+
+	goodSign := make(chan bool)
+	goodRef := make(chan bool)
+
+	go func() {
+		goodSign <- data.VerifyInputSignatures()
+	}()
+
+	go func() {
+		goodRef <- m.BlockChain.Head.UTxOManagerPointer.VerifyTransactionBlockRefs(data)
+	}()
+	m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
+	m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
+	prevBlock := m.BlockChain.Head.Block
+
+	newBlock := new(Block)
+	newBlock.BlockCount = prevBlock.BlockCount + 1
+	newBlock.PrevHash = prevBlock.Hash()
+	newBlock.Nonce = rand.Uint32()
+	copy(newBlock.Data[0:32], newHash[0:32])
+	newBlock.Difficulty = prevBlock.Difficulty
+
+	if !(<-goodRef) {
+		m.DebugPrint("The prepared block for mining had bad refs, ignoring")
+		return nil
+	}
+
+	if !(<-goodSign) {
+		m.DebugPrint("The prepared block has bad signatures, ignoring")
+		return nil
+	}
+
+	return newBlock
+}
+
+//###############representation#####################
+
+//DebugPrint print if debug is on
+func (m *Miner) DebugPrint(msg string) {
+	if m != nil {
+		if m.Debug {
+			fmt.Printf(msg)
 		}
 	}
 }
@@ -159,7 +224,7 @@ func (m *Miner) PrintHash(n int) {
 
 }
 
-//############################################
+//###########################Networking#################################
 
 // Send broadcast block relevant addresses. Before transmitting the actual data, the receiver is requested to confirm whether he wants the data
 func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver [KeySize]byte) {
@@ -233,8 +298,6 @@ func (m *Miner) Request(RequestType uint8, Requester [KeySize]byte, data []byte)
 
 }
 
-//############################################
-
 // ReceiveNetwork decodes all the incoming network traffic. The request are transferred to the coresponding decoders
 func (m *Miner) ReceiveNetwork() {
 	for {
@@ -294,18 +357,7 @@ func (m *Miner) ReceiveSend(msg []byte) {
 			}
 		}
 	case SendType["BlockData"]:
-		tbn := DeserializeTransactionBlockNode(ss.data[:])
-
-		bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
-
-		if bcn != nil {
-			if tbn.Hash == bcn.Block.Data {
-				bcn.DataPointer = tbn.TransactionBlock
-			} else {
-				fmt.Printf("Received data of block with wrong Hash, not added")
-			}
-
-		}
+		m.BlockChain.AddData(ss.data[:])
 	case SendType["HeaderAndData"]:
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
@@ -317,16 +369,7 @@ func (m *Miner) ReceiveSend(msg []byte) {
 			}
 		}
 
-		tbn := DeserializeTransactionBlockNode(ss.data[BlockSize:])
-		bcn := m.BlockChain.GetBlockChainNodeAtHash(tbn.Parent)
-
-		if bcn != nil {
-			if tbn.Hash == bcn.Block.Data {
-				bcn.DataPointer = tbn.TransactionBlock
-			} else {
-				fmt.Printf("Received data of block with wrong Hash, not added")
-			}
-		}
+		m.BlockChain.AddData(ss.data[:])
 	case SendType["TransactionBlock"]:
 		//tx := DeserializeTransactionBlock(ss.data)
 		fmt.Printf("todo: implement this")
@@ -359,8 +402,22 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 				go m.Send(SendType["BlockData"], blData[:], m.Wallet.PublicKey, rq.Requester)
 			}
 		}
-	case SendType["Blockchain"]:
-		fmt.Printf("---------------------Blockchain request not implemented!")
+	case SendType["DataFromHash"]:
+		m.DebugPrint("someone request data from hash,sending")
+		var hash [32]byte
+		copy(hash[0:32], rq.data[0:32])
+
+		m.BlockChain.AllNodesMapMutex.Lock()
+		k, ok := m.BlockChain.AllNodesMap[hash]
+		m.BlockChain.AllNodesMapMutex.Unlock()
+
+		if ok {
+			if k.HasData {
+				m.Send(SendType["BlockData"], k.DataPointer.SerializeTransactionBlock(), m.Wallet.PublicKey, rq.Requester)
+				m.DebugPrint("was able to deliver the requested datablock")
+			}
+
+		}
 	}
 
 }
@@ -369,4 +426,9 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 func (m *Miner) BroadcastBlock(blc *Block) {
 	data := blc.SerializeBlock()
 	m.Send(SendType["BlockHeader"], data[:], m.Wallet.PublicKey, Everyone)
+}
+
+// RequestBlockFromHash makes request for block
+func (m *Miner) RequestBlockFromHash(hash [32]byte) {
+	m.Request(RequestType["BlockHeaderFromHash"], m.Wallet.PublicKey, hash[:])
 }

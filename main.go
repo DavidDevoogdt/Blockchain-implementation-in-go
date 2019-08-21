@@ -1,4 +1,4 @@
-package davidcoin
+package main
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 
 func main() {
 
-	NumberOfMiners := 5
+	NumberOfMiners := 1
 
 	broadcaster := NewBroadcaster("receive Channel")
 	fmt.Printf("made broadcaster\n")
@@ -30,6 +30,8 @@ func main() {
 		fmt.Printf("seting up miner %d\n", i)
 		Miners[i] = CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
 	}
+
+	Miners[0].StartDebug()
 
 	for i := 0; i < NumberOfMiners; i++ {
 		go Miners[i].MineContiniously()
