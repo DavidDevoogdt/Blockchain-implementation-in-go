@@ -10,7 +10,7 @@ type UTxOManager struct {
 	attachedBlockChainNode *BlockChainNode
 	UtxOMap                map[[32]byte]map[uint8]bool
 	mapMutex               sync.RWMutex
-	secondLayerMutexes     [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block number. This is lightweight and still faster than using a single mutex for all
+	secondLayerMutexes     [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block hash. This is lightweight and still faster than using a single mutex for all
 	Miner                  *Miner
 }
 
@@ -207,4 +207,34 @@ func (um *UTxOManager) Deepcopy() *UTxOManager {
 	}
 
 	return umCopy
+}
+
+//Print shows all unspent transactions
+func (um *UTxOManager) Print() {
+
+	var wg sync.WaitGroup
+	// acquire all locks for second layer
+	for i := range um.secondLayerMutexes {
+		um.secondLayerMutexes[i].RLock()
+	}
+
+	um.mapMutex.RLock()
+	for k, v := range um.UtxOMap {
+		wg.Add(1)
+		go func(v map[uint8]bool, k [32]byte) {
+			for k2 := range v {
+				fmt.Printf("transaction %x-%d unspent\n", k, k2)
+			}
+			wg.Done()
+		}(v, k)
+	}
+	um.mapMutex.RUnlock()
+
+	wg.Wait()
+
+	// release all locks
+	for i := range um.secondLayerMutexes {
+		um.secondLayerMutexes[i].RUnlock()
+	}
+
 }

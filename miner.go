@@ -156,7 +156,7 @@ func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
 	newHash := data.Hash()
 
 	if !head.UTxOManagerIsUpToDate {
-		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning"))
+		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning\n"))
 		m.BlockChain.VerifyAndBuildDown(head)
 		return nil
 	}
@@ -171,8 +171,8 @@ func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
 	go func() {
 		goodRef <- m.BlockChain.Head.UTxOManagerPointer.VerifyTransactionBlockRefs(data)
 	}()
-	m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
-	m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
+	//m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
+	//m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
 	prevBlock := m.BlockChain.Head.Block
 
 	newBlock := new(Block)

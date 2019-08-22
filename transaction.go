@@ -13,10 +13,10 @@ const TransactionRefSize = 33
 const TransactionInputSize = 32 + TransactionRefSize
 
 // TransactionOutputSize is len of a transaction output
-const TransactionOutputSize = 8 + 32 + 2*KeySize
+const TransactionOutputSize = 8 + 32 + KeySize
 
 // TransactionRequestSize is len of a transaction request
-const TransactionRequestSize = 8 + 32 + 2*KeySize
+const TransactionRequestSize = 8 + 32 + KeySize
 
 // TransactionRef dd
 type TransactionRef struct {
@@ -45,7 +45,6 @@ func DeserializeTransactionRef(ret [TransactionRefSize]byte) *TransactionRef {
 // TransactionBlockNode keeps usefull information for serialization
 type TransactionBlockNode struct {
 	Hash             [32]byte
-	Parent           [32]byte
 	Length           uint64
 	TransactionBlock *TransactionBlock
 }
@@ -56,22 +55,20 @@ func SerializeTransactionBlockNode(tb *TransactionBlock, Parent [32]byte) []byte
 	ser := tb.SerializeTransactionBlock()
 	tbn.Length = uint64(len(ser))
 	tbn.Hash = tb.Hash()
-	ret := make([]byte, 32+32+8+tbn.Length)
+	ret := make([]byte, 32+8+tbn.Length)
 	copy(ret[0:32], tbn.Hash[0:32])
-	copy(ret[32:64], tbn.Parent[0:32])
-	binary.LittleEndian.PutUint64(ret[64:72], tbn.Length)
-	copy(ret[72:72+tbn.Length], ser[:])
+	//copy(ret[32:64], tbn.Parent[0:32])
+	binary.LittleEndian.PutUint64(ret[32:40], tbn.Length)
+	copy(ret[40:40+tbn.Length], ser[:])
 	return ret
 }
 
 //DeserializeTransactionBlockNode makes transaction block ready for transmission. Blockchain is used to recover pointer to actual data, not reference
 func DeserializeTransactionBlockNode(ret []byte, bc *BlockChain) *TransactionBlockNode {
 	tbn := new(TransactionBlockNode)
-
 	copy(tbn.Hash[0:32], ret[0:32])
-	copy(tbn.Parent[0:32], ret[32:64])
-	tbn.Length = binary.LittleEndian.Uint64(ret[64:72])
-	tbn.TransactionBlock = DeserializeTransactionBlock(ret[72:72+tbn.Length], bc)
+	tbn.Length = binary.LittleEndian.Uint64(ret[32:40])
+	tbn.TransactionBlock = DeserializeTransactionBlock(ret[40:40+tbn.Length], bc)
 	return tbn
 }
 
@@ -79,12 +76,12 @@ func DeserializeTransactionBlockNode(ret []byte, bc *BlockChain) *TransactionBlo
 
 // TransactionBlock groups transactions
 type TransactionBlock struct {
-	InputNumber  uint8
-	OutputNumber uint8
-	InputList    []*TransactionInput
-	OutputList   []*TransactionOutput
-	//InputList    [][TransactionInputSize]byte
-	//OutputList   [][TransactionOutputSize]byte
+	InputNumber    uint8
+	OutputNumber   uint8
+	InputList      []*TransactionInput
+	OutputList     []*TransactionOutput
+	Signature      [32]byte
+	PayerPublicKey [KeySize]byte
 }
 
 // InitializeTransactionBlock setups basic stuff in transactionblock
@@ -202,7 +199,6 @@ func (tx *TransactionInput) Verify() bool {
 type TransactionOutput struct {
 	Amount            uint64
 	Signature         [32]byte //payer signature
-	PayerPublicKey    [KeySize]byte
 	ReceiverPublicKey [KeySize]byte
 }
 
@@ -210,9 +206,9 @@ type TransactionOutput struct {
 func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize]byte {
 	var d [TransactionOutputSize]byte
 	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
-	copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
-	copy(d[8+KeySize:8+2*KeySize], tx.ReceiverPublicKey[0:KeySize])
-	copy(d[8+2*KeySize:8+2*KeySize+32], tx.Signature[0:32])
+	//copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
+	copy(d[8:8+KeySize], tx.ReceiverPublicKey[0:KeySize])
+	copy(d[8+KeySize:8+KeySize+32], tx.Signature[0:32])
 
 	return d
 }
@@ -221,9 +217,9 @@ func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize
 func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOutput {
 	tx := new(TransactionOutput)
 	tx.Amount = binary.LittleEndian.Uint64(d[0:8])
-	copy(tx.PayerPublicKey[0:KeySize], d[8:8+KeySize])
-	copy(tx.ReceiverPublicKey[0:KeySize], d[8+KeySize:8+2*KeySize])
-	copy(tx.Signature[0:32], d[8+2*KeySize:8+2*KeySize+32])
+	//copy(tx.PayerPublicKey[0:KeySize], d[8:8+KeySize])
+	copy(tx.ReceiverPublicKey[0:KeySize], d[8:8+KeySize])
+	copy(tx.Signature[0:32], d[8+KeySize:8+KeySize+32])
 	return tx
 }
 
@@ -231,9 +227,9 @@ func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOut
 func (tx *TransactionOutput) SerializeTransactionRequest() [TransactionRequestSize]byte {
 	var d [TransactionRequestSize]byte
 	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
-	copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
-	copy(d[8+KeySize:8+2*KeySize], tx.ReceiverPublicKey[0:KeySize])
-	copy(d[8+2*KeySize:8+2*KeySize+32], tx.Signature[0:32])
+	//copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
+	copy(d[8+KeySize:8+KeySize], tx.ReceiverPublicKey[0:KeySize])
+	copy(d[8+KeySize:8+KeySize+32], tx.Signature[0:32])
 	return d
 }
 
@@ -244,6 +240,15 @@ func (tx *TransactionOutput) Hash() [32]byte {
 }
 
 // Verify verify ownership of payer
-func (tx *TransactionOutput) Verify() bool {
-	return VerifyWithPublicKey(tx.Hash(), tx.Signature, BytesToPublicKey(tx.PayerPublicKey))
+func (tx *TransactionOutput) Verify(PayerPublicKey [KeySize]byte) bool {
+	return VerifyWithPublicKey(tx.Hash(), tx.Signature, BytesToPublicKey(PayerPublicKey))
+}
+
+//###########################################################
+
+// TransactionBlockGroup is a collection of transactionBlocks
+type TransactionBlockGroup struct {
+	size              uint8
+	lengths           []uint16
+	TransactionBlocks *TransactionBlock
 }
