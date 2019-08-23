@@ -32,7 +32,7 @@ type BlockChainNode struct {
 	Block                 *Block
 	Hash                  [32]byte
 	HasData               bool
-	DataPointer           *TransactionBlock
+	DataPointer           *TransactionBlockGroup
 	UTxOManagerPointer    *UTxOManager
 	UTxOManagerIsUpToDate bool
 	Badblock              bool // true if verified bad
@@ -86,22 +86,14 @@ func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
 // GetTransactionOutput turns reference into locally saved version
 func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) *TransactionOutput {
 	// todo verifiy this data is present
-	return bc.AllNodesMap[tr.BlockHash].DataPointer.OutputList[tr.Number]
+	return bc.AllNodesMap[tr.BlockHash].DataPointer.TransactionBlockStructs[tr.TransactionBlockNumber].OutputList[tr.OutputNumber]
 }
 
 // return bool specifies whether miner should stop immediately
 func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
-	k := bc.Miner
-
-	var name string
-	if k != nil {
-		name = fmt.Sprintf("%s", bc.Miner.Name)
-	} else {
-		name = fmt.Sprintf("unknown")
-	}
 
 	if !block0.Verify() {
-		bc.Miner.DebugPrint(fmt.Sprintf("-%s----Block not ok, not added\n", name))
+		bc.Miner.DebugPrint(fmt.Sprintf("Block not ok, not added\n"))
 		return false
 	}
 
@@ -110,7 +102,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	bc.AllNodesMapMutex.Unlock()
 
 	if nok {
-		bc.Miner.DebugPrint(fmt.Sprintf("%s-----already in chain\n", name))
+		bc.Miner.DebugPrint(fmt.Sprintf("already in chain\n"))
 		return false
 	}
 
@@ -126,7 +118,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 		// check whether prevhash in orphan chain
 		for _, obc := range bc.OrphanBlockChains[:] {
 			if obc.HasBlock(_PrevHash) {
-				bc.Miner.DebugPrint(fmt.Sprintf("-----block added to orphaned chain \n"))
+				bc.Miner.DebugPrint(fmt.Sprintf("block added to orphaned chain \n"))
 				obc.addBlockChainNode(block0)
 				return false
 			}
@@ -150,13 +142,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 
 				go bc.Miner.RequestBlockFromHash(block0.PrevHash)
 
-				bc.Miner.DebugPrint(fmt.Sprintf("%s-----setting new root for orphaned chain \n", name))
+				bc.Miner.DebugPrint(fmt.Sprintf("setting new root for orphaned chain \n"))
 				return false
 			}
 		}
 
-		bc.Miner.DebugPrint(fmt.Sprintf("%s-----prev Block not in history, requesting %.10x\n", name, _PrevHash))
-		bc.Miner.DebugPrint(fmt.Sprintf("%s-----creating new orphaned chain \n", name))
+		bc.Miner.DebugPrint(fmt.Sprintf("prev Block not in history, requesting %.10x\n", _PrevHash))
+		bc.Miner.DebugPrint(fmt.Sprintf("creating new orphaned chain \n"))
 		bc.OrphanBlockChains = append(bc.OrphanBlockChains, bc.InitializeOrphanBlockChain(block0))
 
 		go bc.Miner.RequestBlockFromHash(block0.PrevHash)
@@ -180,7 +172,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 	// check whether hash is contained as prehash in orphaned chains
 	for i, obc := range bc.OrphanBlockChains {
 		if _Hash == obc.Root.Block.PrevHash {
-			bc.Miner.DebugPrint(fmt.Sprintf("%s-----joining orphaned chain to main chain!\n", name))
+			bc.Miner.DebugPrint(fmt.Sprintf("joining orphaned chain to main chain!\n"))
 			obc.Root.PrevBlockChainNode = newBCN
 
 			// delete prev node from head if that were the case
@@ -211,7 +203,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 				bc.OtherHeadNodes[mainHead.Hash] = mainHead
 				bc.OtherHeadNodesMutex.Unlock()
 				bc.Head = orphanHead
-				bc.Miner.DebugPrint(fmt.Sprintf("%s-----orphaned chain is now main chain\n", name))
+				bc.Miner.DebugPrint(fmt.Sprintf("orphaned chain is now main chain\n"))
 				return true
 			}
 
@@ -243,7 +235,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 					ptr.PrevBlockChainNode.NextBlockChainNode = ptr
 					ptr = ptr.PrevBlockChainNode
 				}
-				bc.Miner.DebugPrint(fmt.Sprintf("-----block added as new head \n"))
+				bc.Miner.DebugPrint(fmt.Sprintf("block added as new head \n"))
 				return true
 			}
 
@@ -251,7 +243,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 			delete(bc.OtherHeadNodes, block0.PrevHash)
 			bc.OtherHeadNodes[newBCN.Hash] = newBCN
 			bc.OtherHeadNodesMutex.Unlock()
-			bc.Miner.DebugPrint(fmt.Sprintf("-----block added to forked tree \n"))
+			bc.Miner.DebugPrint(fmt.Sprintf("block added to forked tree \n"))
 			return false
 
 		}
@@ -259,13 +251,13 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) bool {
 		delete(bc.OtherHeadNodes, block0.PrevHash)
 		bc.OtherHeadNodes[newBCN.Hash] = newBCN
 		bc.OtherHeadNodesMutex.Unlock()
-		bc.Miner.DebugPrint(fmt.Sprintf("-----new fork created \n"))
+		bc.Miner.DebugPrint(fmt.Sprintf("new fork created \n"))
 		return false
 
 	}
 
 	bc.Head = newBCN
-	bc.Miner.DebugPrint(fmt.Sprintf("-----added to main chain \n"))
+	bc.Miner.DebugPrint(fmt.Sprintf("added to main chain \n"))
 	return true
 
 }
@@ -279,8 +271,9 @@ func (bc *BlockChain) AddData(data []byte) {
 	bc.DanglingDataMutex.RLock()
 	_, ok := bc.DanglingData[Hash]
 	bc.DanglingDataMutex.RUnlock()
+
 	if ok {
-		bc.Miner.DebugPrint("data already known, but still dangling")
+		bc.Miner.DebugPrint("data already known, but still dangling\n")
 		return
 	}
 
@@ -292,14 +285,14 @@ func (bc *BlockChain) AddData(data []byte) {
 		bc.DanglingDataMutex.Lock()
 		bc.DanglingData[Hash] = data
 		bc.DanglingDataMutex.Unlock()
-		bc.Miner.DebugPrint("Added data as dangling")
+		bc.Miner.DebugPrint("Added data as dangling\n")
 	}
 
-	tb := DeserializeTransactionBlock(data[:], bc)
+	tb := DeserializeTransactionBlockGroup(data[:], bc)
 	val.HasData = true
 	val.DataPointer = tb
 
-	bc.Miner.DebugPrint("added data to bcn, invoking the building of utxo")
+	bc.Miner.DebugPrint("added data to bcn, invoking the building of utxo\n")
 }
 
 // BlockChainGenesis creates first miner, mines first block and initiates the blockchain
@@ -456,20 +449,26 @@ func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 func (bc *BlockChain) VerifyAndBuildDown(bcn *BlockChainNode) {
 
 	if bc.IsOrphan {
-		bc.Miner.DebugPrint("orphans cannot build utxo, returning ")
+		bc.Miner.DebugPrint("orphans cannot build utxo, returning\n")
 		return
 	}
 
 	if bcn.UTxOManagerIsUpToDate {
-		bc.Miner.DebugPrint("txo manager already up to date")
+		bc.Miner.DebugPrint("txo manager already up to date\n")
 		return
 	}
 
 	bcn.PrevBlockChainNode.NextBlockChainNode = bcn // to restore ability to crawl back up
 
+	if bcn.Block.BlockCount == 0 {
+		bc.Miner.DebugPrint("Block zero, returning")
+		return
+	}
+
 	if !bcn.HasData {
-		go bc.Miner.Request(RequestType["DataFromHash"], bc.Miner.Wallet.PublicKey, bcn.Hash[:])
+		go bc.Miner.Request(RequestType["TransactionBlockGroupFromHash"], bc.Miner.Wallet.PublicKey, bcn.Hash[:])
 		bc.Miner.DebugPrint("Requesting transactiondata")
+
 		if !bcn.PrevBlockChainNode.UTxOManagerIsUpToDate {
 			bc.VerifyAndBuildDown(bcn.PrevBlockChainNode)
 		}
@@ -480,22 +479,30 @@ func (bc *BlockChain) VerifyAndBuildDown(bcn *BlockChainNode) {
 			goodTransactions := bcn.PrevBlockChainNode.UTxOManagerPointer.VerifyTransactionBlockRefs(bcn.DataPointer)
 			if !goodTransactions {
 				bcn.Badblock = true
-				bc.Miner.DebugPrint("found bad block, transactions not matchin")
+				bc.Miner.DebugPrint("found bad block, transactions not matchin\n")
 			}
-			goodSignatures := bcn.DataPointer.VerifyInputSignatures()
+
+			goodSignatures := true
+			for _, tb := range bcn.DataPointer.TransactionBlockStructs {
+				if !tb.VerifyInputSignatures() {
+					goodSignatures = false
+					return
+				}
+			}
+
 			if !goodSignatures {
 				bcn.Badblock = true
-				bc.Miner.DebugPrint("False signatures, not continuing")
+				bc.Miner.DebugPrint("False signatures, not continuing\n")
 			}
 			// good block, continuing
 			keepCopy := bcn.Block.BlockCount%5 == 0
-			bc.Miner.DebugPrint(fmt.Sprintf("Updating utxomanager, Keepcopy = %t", keepCopy))
-			succes := bcn.PrevBlockChainNode.UTxOManagerPointer.UpdateWithNextBlockChainNode(bcn, bcn.Block.BlockCount%5 == 0)
+			//bc.Miner.DebugPrint(fmt.Sprintf("Updating utxomanager, Keepcopy = %t\n", keepCopy))
+			succes := bcn.PrevBlockChainNode.UTxOManagerPointer.UpdateWithNextBlockChainNode(bcn, keepCopy)
 			if !succes {
-				log.Fatal("updating utxoManager Failed, should not happen!")
+				log.Fatal("updating utxoManager Failed, should not happen!\n")
 				return
 			}
-			bc.Miner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d", bcn.Block.BlockCount))
+			bc.Miner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d\n", bcn.Block.BlockCount))
 
 		} else {
 			bc.VerifyAndBuildDown(bcn.PrevBlockChainNode)

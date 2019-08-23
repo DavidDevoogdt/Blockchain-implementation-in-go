@@ -14,7 +14,7 @@ var GenesisBlock *Block
 
 // Block is basic type for node in blockchain
 type Block struct {
-	Data       [32]byte
+	MerkleRoot [32]byte
 	PrevHash   [32]byte
 	Nonce      uint32
 	Difficulty uint32
@@ -27,7 +27,7 @@ const BlockSize = 76
 // SerializeBlock serialize the content of the block
 func (b *Block) SerializeBlock() [BlockSize]byte {
 	var d [BlockSize]byte
-	copy(d[0:32], b.Data[0:32])
+	copy(d[0:32], b.MerkleRoot[0:32])
 	copy(d[32:64], b.PrevHash[0:32])
 	binary.LittleEndian.PutUint32(d[64:68], b.Nonce)
 	binary.LittleEndian.PutUint32(d[68:72], b.Difficulty)
@@ -38,7 +38,7 @@ func (b *Block) SerializeBlock() [BlockSize]byte {
 // DeserializeBlock does the inverse of SerializeBlock
 func DeserializeBlock(d [BlockSize]byte) *Block {
 	b := new(Block)
-	copy(b.Data[0:32], d[0:32])
+	copy(b.MerkleRoot[0:32], d[0:32])
 	copy(b.PrevHash[0:32], d[32:64])
 	b.Nonce = binary.LittleEndian.Uint32(d[64:68])
 	b.Difficulty = binary.LittleEndian.Uint32(d[68:72])
@@ -60,7 +60,7 @@ func (b *Block) Print() {
 // Print prints human readable description
 func (b *Block) print() {
 	fmt.Printf("\n_____________________\n")
-	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nLocation %x", b.BlockCount, b.Data, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), &b)
+	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nLocation %x", b.BlockCount, b.MerkleRoot, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), &b)
 	fmt.Printf("_____________________\n")
 }
 
@@ -80,7 +80,7 @@ func generateGenesis(difficulty uint32, m *Miner) *Block {
 	var h [32]byte
 	genesis.PrevHash = h
 
-	genesis.Data = sha256.Sum256([]byte("hello world!"))
+	genesis.MerkleRoot = sha256.Sum256([]byte("hello world!"))
 	genesis.Difficulty = difficulty
 	genesis.BlockCount = 0
 	//copy(genesis.Owner[:], m.Wallet[:])

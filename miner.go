@@ -120,7 +120,13 @@ func (m *Miner) MineContiniously() {
 		tb := InitializeTransactionBlock()
 		tb.AddOutput(&TransactionOutput{Amount: 1e18, ReceiverPublicKey: m.Wallet.PublicKey})
 
-		prepBlock := m.PrepareBlockForMining(tb)
+		tbg := InitializeTransactionBlockGroup()
+		tbg.Add(tb)
+		tbg.FinalizeTransactionBlockGroup()
+
+		tbg.SerializeTransactionBlockGroup()
+
+		prepBlock := m.PrepareBlockForMining(tbg)
 
 		if prepBlock != nil {
 			blc := m.MineBlock(prepBlock)
@@ -134,26 +140,30 @@ func (m *Miner) MineContiniously() {
 				m.BlockChain.AllNodesMapMutex.Lock()
 				val, ok := m.BlockChain.AllNodesMap[blc.Hash()]
 				m.BlockChain.AllNodesMapMutex.Unlock()
+
 				if !ok {
-					m.DebugPrint("Block just added but not in chain, serious error")
+					m.DebugPrint("Block just added but not in chain, serious error\n")
 				}
 
 				val.HasData = true
-				val.DataPointer = tb
+
+				val.DataPointer = tbg
 
 				m.BroadcastBlock(blc)
 			}
 
+		} else {
+			m.DebugPrint("Block nil, somthing went wrong with preparation of it\n")
 		}
 	}
 }
 
 // PrepareBlockForMining takes transactiondata and builds a block suitable for mining
-func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
+func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
+
+	m.DebugPrint(" started preparing tbg for mining\n")
 
 	head := m.BlockChain.Head
-
-	newHash := data.Hash()
 
 	if !head.UTxOManagerIsUpToDate {
 		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning\n"))
@@ -165,12 +175,19 @@ func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
 	goodRef := make(chan bool)
 
 	go func() {
-		goodSign <- data.VerifyInputSignatures()
+		for _, tb := range tbg.TransactionBlockStructs {
+			if !tb.VerifyInputSignatures() {
+				goodSign <- false
+				return
+			}
+		}
+		goodSign <- true
 	}()
 
 	go func() {
-		goodRef <- m.BlockChain.Head.UTxOManagerPointer.VerifyTransactionBlockRefs(data)
+		goodRef <- m.BlockChain.Head.UTxOManagerPointer.VerifyTransactionBlockRefs(tbg)
 	}()
+
 	//m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
 	//m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
 	prevBlock := m.BlockChain.Head.Block
@@ -179,20 +196,23 @@ func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
 	newBlock.BlockCount = prevBlock.BlockCount + 1
 	newBlock.PrevHash = prevBlock.Hash()
 	newBlock.Nonce = rand.Uint32()
-	copy(newBlock.Data[0:32], newHash[0:32])
+	newBlock.MerkleRoot = tbg.merkleTree.GetMerkleRoot()
 	newBlock.Difficulty = prevBlock.Difficulty
 
 	if !(<-goodRef) {
-		m.DebugPrint("The prepared block for mining had bad refs, ignoring")
+		m.DebugPrint("The prepared transactionblockgroup for mining had bad refs, ignoring\n")
 		return nil
 	}
 
 	if !(<-goodSign) {
-		m.DebugPrint("The prepared block has bad signatures, ignoring")
+		m.DebugPrint("The prepared transactionblockgroup bad signatures, ignoring\n")
 		return nil
 	}
 
+	//m.DebugPrint("finished praparation of block\n")
+
 	return newBlock
+
 }
 
 //###############representation#####################
@@ -201,7 +221,7 @@ func (m *Miner) PrepareBlockForMining(data *TransactionBlock) *Block {
 func (m *Miner) DebugPrint(msg string) {
 	if m != nil {
 		if m.Debug {
-			fmt.Printf(msg)
+			fmt.Printf("miner %s---- %s", m.Name, msg)
 		}
 	}
 }
@@ -309,7 +329,6 @@ func (m *Miner) ReceiveNetwork() {
 			go m.ReceiveRequest(msg)
 		case NetworkTypes["Confirmation"]:
 			cs := DeserializeConfirmationStruct(msg)
-
 			m.ReceivedDataMutex.Lock()
 			_, ok := m.ReceivedData[cs.hash]
 			m.ReceivedDataMutex.Unlock()
@@ -356,9 +375,9 @@ func (m *Miner) ReceiveSend(msg []byte) {
 				m.interrupt <- true
 			}
 		}
-	case SendType["BlockData"]:
+	case SendType["TransactionBlockGroup"]:
 		m.BlockChain.AddData(ss.data[:])
-	case SendType["HeaderAndData"]:
+	case SendType["HeaderAndTransactionBlockGroup"]:
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
 		bl := DeserializeBlock(a)
@@ -368,14 +387,12 @@ func (m *Miner) ReceiveSend(msg []byte) {
 				m.interrupt <- true
 			}
 		}
-
 		m.BlockChain.AddData(ss.data[:])
-	case SendType["TransactionBlock"]:
-		//tx := DeserializeTransactionBlock(ss.data)
-		fmt.Printf("todo: implement this")
-
+	case SendType["Transaction"]:
+		fmt.Print("todo implement reception of transaction proof")
+	case SendType["Blockchain"]:
+		fmt.Printf("receiving of blockchain send not yet implemented")
 	}
-
 }
 
 // ReceiveRequest decodes the request and tries to service the request if possible
@@ -386,38 +403,27 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 		var data [32]byte
 		copy(data[0:32], rq.data[0:32])
 		bl := m.BlockChain.GetBlockChainNodeAtHash(data)
-		//fmt.Printf("Got request from %x for block with hash %x\n", rq.Requester, data[:])
-
 		if bl != nil {
 			blData := bl.Block.SerializeBlock()
 			go m.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
 		}
-	case SendType["DataFromHash"]:
+
+	case RequestType["BlockHeaderFromHeight"]:
+		fmt.Printf("todo implement blockheader from height request")
+
+	case RequestType["TransactionBlockGroupFromHash"]:
 		var hash [32]byte
 		copy(hash[0:32], rq.data[0:32])
 		bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
 		if bl != nil {
 			if bl.DataPointer != nil {
-				blData := bl.DataPointer.SerializeTransactionBlock()
-				go m.Send(SendType["BlockData"], blData[:], m.Wallet.PublicKey, rq.Requester)
+				blData := bl.DataPointer.SerializeTransactionBlockGroup()
+				go m.Send(SendType["TransactionBlockGroup"], blData[:], m.Wallet.PublicKey, rq.Requester)
 			}
 		}
-	case SendType["DataFromHash"]:
-		m.DebugPrint("someone request data from hash,sending")
-		var hash [32]byte
-		copy(hash[0:32], rq.data[0:32])
 
-		m.BlockChain.AllNodesMapMutex.Lock()
-		k, ok := m.BlockChain.AllNodesMap[hash]
-		m.BlockChain.AllNodesMapMutex.Unlock()
-
-		if ok {
-			if k.HasData {
-				m.Send(SendType["BlockData"], k.DataPointer.SerializeTransactionBlock(), m.Wallet.PublicKey, rq.Requester)
-				m.DebugPrint("was able to deliver the requested datablock")
-			}
-
-		}
+	case RequestType["Transaction"]:
+		fmt.Printf("todo implement request of transaction")
 	}
 
 }

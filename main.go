@@ -1,16 +1,23 @@
 package main
 
+import (
+	"fmt"
+	"time"
+)
+
 // NumberOfMiners is local number of threads competing
 
 func main() {
 
-	/*NumberOfMiners := 1
+	NumberOfMiners := 1
 
 	broadcaster := NewBroadcaster("receive Channel")
 	fmt.Printf("made broadcaster\n")
 	Miners := make([]*Miner, NumberOfMiners)
 
 	Miners[0] = BlockChainGenesis(3, broadcaster)
+
+	Miners[0].StartDebug()
 
 	fmt.Printf("made genesis miner\n")
 
@@ -32,8 +39,10 @@ func main() {
 			<-InsertMiner
 			m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 			Miners = append(Miners, m)
-
+			m.StartDebug()
 			NumberOfMiners++
+
+			//m.MineContiniously()
 
 			if NumberOfMiners == 7 {
 				return
@@ -56,7 +65,7 @@ func main() {
 		}
 		fmt.Printf("##########################################################################")
 
-	} */
+	}
 
 	/*
 		mt := InitializeMerkleTree()

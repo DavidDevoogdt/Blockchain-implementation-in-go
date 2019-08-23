@@ -15,6 +15,33 @@ type ProofStruct struct {
 	data             []byte
 }
 
+// SerializeProofStruct makes it ready for network transport
+func (ps *ProofStruct) SerializeProofStruct() []byte {
+	dlen := len(ps.data)
+	psize := int(ps.proofSize) * 32
+	ret := make([]byte, 1+1+psize+dlen)
+	ret[0] = ps.applicationOrder
+	ret[1] = ps.proofSize
+	copy(ret[2:2+psize], ps.proofArray[0:psize])
+	copy(ret[2+psize:2+psize+dlen], ps.data[0:dlen])
+	return ret
+}
+
+// DeserializeProofStruct turns byte array back into proofstruct
+func DeserializeProofStruct(ret []byte) *ProofStruct {
+	pf := new(ProofStruct)
+
+	pf.applicationOrder = ret[0]
+	pf.proofSize = ret[1]
+	psize := int(pf.proofSize) * 32
+	pf.proofArray = make([]byte, psize)
+	copy(pf.proofArray[0:psize], ret[2:2+psize])
+	dlen := len(ret) - psize - 2
+	pf.data = make([]byte, dlen)
+	copy(pf.data[0:dlen], ret[2+psize:2+psize+dlen])
+	return pf
+}
+
 // VerifyProofStruct checks whether data is correct
 func (ps *ProofStruct) VerifyProofStruct(expected [32]byte) bool {
 	temp := sha256.Sum256(ps.data[:])
@@ -44,13 +71,29 @@ type MerkleTree struct {
 	bitsOnHighLevel uint8
 }
 
+// GetMerkleRoot returns top hash
+func (mt *MerkleTree) GetMerkleRoot() [32]byte {
+	var ret [32]byte
+	if !mt.finalized {
+		fmt.Printf("tree not yet finalized")
+		return ret
+	}
+	copy(ret[0:32], mt.levelHash[0][0][0:32])
+	return ret
+}
+
 // Add simply adds one elem
 func (mt *MerkleTree) Add(a *[]byte) {
-	if mt.elements <= 254 {
-		mt.elements++
-		mt.data = append(mt.data, a)
+	if mt.finalized {
+		fmt.Printf("tree already finalize, not added")
 	} else {
-		fmt.Printf("to many elements, not added\n")
+		if mt.elements <= 254 {
+
+			mt.elements++
+			mt.data = append(mt.data, a)
+		} else {
+			fmt.Printf("to many elements, not added\n")
+		}
 	}
 
 }

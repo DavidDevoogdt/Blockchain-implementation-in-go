@@ -7,7 +7,7 @@ import (
 )
 
 // TransactionRefSize is size of a reference tor a transaction in the blockchain
-const TransactionRefSize = 33
+const TransactionRefSize = 34
 
 // TransactionInputSize is len of a transaction input
 const TransactionInputSize = 32 + TransactionRefSize
@@ -20,15 +20,17 @@ const TransactionRequestSize = 8 + 32 + KeySize
 
 // TransactionRef dd
 type TransactionRef struct {
-	BlockHash [32]byte
-	Number    uint8
+	BlockHash              [32]byte
+	TransactionBlockNumber uint8
+	OutputNumber           uint8
 }
 
 // SerializeTransactionRef serializes transaction
 func (tr *TransactionRef) SerializeTransactionRef() [TransactionRefSize]byte {
 	var ret [TransactionRefSize]byte
 	copy(ret[0:32], tr.BlockHash[0:32])
-	ret[32] = tr.Number
+	ret[32] = tr.OutputNumber
+	ret[33] = tr.TransactionBlockNumber
 	return ret
 }
 
@@ -36,7 +38,8 @@ func (tr *TransactionRef) SerializeTransactionRef() [TransactionRefSize]byte {
 func DeserializeTransactionRef(ret [TransactionRefSize]byte) *TransactionRef {
 	tr := new(TransactionRef)
 	copy(tr.BlockHash[0:32], ret[0:32])
-	tr.Number = ret[32]
+	tr.OutputNumber = ret[32]
+	tr.TransactionBlockNumber = ret[33]
 	return tr
 }
 
@@ -142,7 +145,7 @@ func DeserializeTransactionBlock(buf []byte, bc *BlockChain) *TransactionBlock {
 
 // VerifyInputSignatures is necessary to check whether the coins really belong to the spender
 func (tb *TransactionBlock) VerifyInputSignatures() bool {
-	fmt.Printf("todo verify input signatures")
+	fmt.Printf("------------------>todo verify input signatures<------------------\n")
 	return true
 }
 
@@ -248,7 +251,90 @@ func (tx *TransactionOutput) Verify(PayerPublicKey [KeySize]byte) bool {
 
 // TransactionBlockGroup is a collection of transactionBlocks
 type TransactionBlockGroup struct {
-	size              uint8
-	lengths           []uint16
-	TransactionBlocks *TransactionBlock
+	size                    uint8
+	lengths                 []uint16
+	TransactionBlocks       [][]byte
+	TransactionBlockStructs []*TransactionBlock
+	merkleTree              *MerkleTree
+	finalized               bool
+}
+
+// SerializeTransactionBlockGroup makes it ready to send over network
+func (tbg *TransactionBlockGroup) SerializeTransactionBlockGroup() []byte {
+	totalSize := 1 + int(tbg.size)*2
+	for _, v := range tbg.lengths {
+		totalSize += int(v)
+	}
+	ret := make([]byte, totalSize)
+	ret[0] = tbg.size
+	for i, v := range tbg.lengths {
+		binary.LittleEndian.PutUint16(ret[1+2*i:3+2*i], v)
+	}
+	index := 1 + int(tbg.size)*2
+	for i, val := range tbg.TransactionBlocks {
+		length := int(tbg.lengths[i])
+		copy(ret[index:index+length], val[0:length])
+		index += length
+	}
+	return ret
+}
+
+// DeserializeTransactionBlockGroup does inverse of SerializeTransactionBlockGroup
+func DeserializeTransactionBlockGroup(ret []byte, bc *BlockChain) *TransactionBlockGroup {
+	tbg := new(TransactionBlockGroup)
+	tbg.size = ret[0]
+	tbg.lengths = make([]uint16, tbg.size)
+	tbg.merkleTree = InitializeMerkleTree()
+
+	for i := 0; i < int(tbg.size); i++ {
+		tbg.lengths[i] = binary.LittleEndian.Uint16(ret[1+2*i : 3+2*i])
+	}
+
+	tbg.TransactionBlocks = make([][]byte, tbg.size)
+	tbg.TransactionBlockStructs = make([]*TransactionBlock, tbg.size)
+
+	index := 1 + int(tbg.size)*2
+	for i, Uint16Length := range tbg.lengths {
+		length := int(Uint16Length)
+		tbg.TransactionBlocks[i] = make([]byte, length)
+		copy(tbg.TransactionBlocks[i][0:length], ret[index:index+length])
+		tbg.TransactionBlockStructs[i] = DeserializeTransactionBlock(tbg.TransactionBlocks[i], bc)
+		index += length
+		tbg.merkleTree.Add(&tbg.TransactionBlocks[i])
+	}
+	tbg.merkleTree.FinalizeTree()
+	tbg.finalized = true
+	return tbg
+}
+
+//InitializeTransactionBlockGroup is used to construct tbg
+func InitializeTransactionBlockGroup() *TransactionBlockGroup {
+	tbg := new(TransactionBlockGroup)
+	tbg.size = 0
+	tbg.lengths = make([]uint16, 0)
+	tbg.TransactionBlocks = make([][]byte, 0)
+	tbg.merkleTree = InitializeMerkleTree()
+
+	return tbg
+}
+
+//Add adds an element to the group
+func (tbg *TransactionBlockGroup) Add(tb *TransactionBlock) {
+	if !tbg.finalized {
+		stb := tb.SerializeTransactionBlock()
+		tbg.size++
+		tbg.lengths = append(tbg.lengths, uint16(len(stb)))
+		tbg.TransactionBlocks = append(tbg.TransactionBlocks, stb)
+		tbg.merkleTree.Add(&stb)
+		tbg.TransactionBlockStructs = append(tbg.TransactionBlockStructs, tb)
+	} else {
+		fmt.Printf("Cannot add to finalized tree, aborting")
+	}
+
+}
+
+// FinalizeTransactionBlockGroup needs to be calle before transmission
+func (tbg *TransactionBlockGroup) FinalizeTransactionBlockGroup() {
+	tbg.merkleTree.FinalizeTree()
+	tbg.finalized = true
 }
