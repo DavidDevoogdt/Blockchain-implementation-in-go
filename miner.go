@@ -25,10 +25,14 @@ type Miner struct {
 	Debug    bool
 	isMining bool
 
-	ReceivedData        map[[32]byte]bool
-	ReceivedDataMutex   sync.Mutex
+	ReceivedData      map[[32]byte]bool
+	ReceivedDataMutex sync.Mutex
+
 	ReceiveChannels     map[[32]byte]chan bool
 	ReceiveChannelMutex sync.Mutex
+
+	SynchronousReceiveChannelsMutex sync.Mutex
+	SynchronousReceiveChannels      map[[32]byte]chan []byte
 }
 
 //###################one time init###################
@@ -39,7 +43,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	m := new(Miner)
 	m.Name = name
 	m.Wallet = InitializeWallet()
-	m.BlockChain = DeSerializeBlockChain(blockChain)
+	m.BlockChain = DeserializeBlockChain(blockChain)
 	m.Broadcaster = Broadcaster
 	m.NetworkChannel = make(chan []byte)
 	m.ReceiveChannels = make(map[[32]byte]chan bool)
@@ -50,7 +54,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	m.ReceivedData = make(map[[32]byte]bool)
 	m.BlockChain.Root.UTxOManagerPointer = InitializeUTxOMananger(m)
 	m.BlockChain.Root.UTxOManagerIsUpToDate = true
-	InitializeUTxOMananger(m)
+	//InitializeUTxOMananger(m)
 
 	go m.ReceiveNetwork()
 
@@ -71,7 +75,6 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.Name = name
 	m.Wallet = InitializeWallet()
 	m.BlockChain = blockChain
-	m.BlockChain.Root.UTxOManagerPointer = InitializeUTxOMananger(m)
 	m.Broadcaster = Broadcaster
 	m.NetworkChannel = make(chan []byte)
 	m.ReceiveChannels = make(map[[32]byte]chan bool)
@@ -80,7 +83,7 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.Debug = false
 	m.ReceivedData = make(map[[32]byte]bool)
 
-	InitializeUTxOMananger(m)
+	//InitializeUTxOMananger(m)
 
 	go m.ReceiveNetwork()
 	return m
@@ -118,7 +121,7 @@ func (m *Miner) MineBlock(newBlock *Block) *Block {
 func (m *Miner) MineContiniously() {
 	for {
 		tb := InitializeTransactionBlock()
-		tb.AddOutput(&TransactionOutput{Amount: 1e18, ReceiverPublicKey: m.Wallet.PublicKey})
+		tb.AddOutput(&TransactionOutput{Amount: 1e18 + uint64(rand.Int63n(1000)), ReceiverPublicKey: m.Wallet.PublicKey})
 
 		tbg := InitializeTransactionBlockGroup()
 		tbg.Add(tb)
@@ -132,22 +135,11 @@ func (m *Miner) MineContiniously() {
 			blc := m.MineBlock(prepBlock)
 			//print(blc)
 			if blc == nil {
-				//fmt.Printf("%s was not fast enough \n", m.Name)
+				m.DebugPrint(fmt.Sprintf("%s was not fast enough \n", m.Name))
 			} else {
 				m.DebugPrint(fmt.Sprintf("%s mined block: \n", m.Name))
-				m.BlockChain.addBlockChainNode(blc)
 
-				m.BlockChain.AllNodesMapMutex.Lock()
-				val, ok := m.BlockChain.AllNodesMap[blc.Hash()]
-				m.BlockChain.AllNodesMapMutex.Unlock()
-
-				if !ok {
-					m.DebugPrint("Block just added but not in chain, serious error\n")
-				}
-
-				val.HasData = true
-
-				val.DataPointer = tbg
+				m.BlockChain.AddInternal(blc, tbg)
 
 				m.BroadcastBlock(blc)
 			}
@@ -167,8 +159,6 @@ func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
 
 	if !head.UTxOManagerIsUpToDate {
 		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning\n"))
-		m.BlockChain.VerifyAndBuildDown(head)
-		return nil
 	}
 
 	goodSign := make(chan bool)
@@ -254,6 +244,8 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 	ss.SendType = sendType
 	ss.length = uint64(len(data))
 	ss.data = data
+
+	ss.Receiver = receiver
 	a := ss.SerializeSendStruct()
 
 	rc, ok := b.Lookup[receiver]
@@ -269,13 +261,16 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 		m.ReceiveChannels[cs.response] = ll
 		m.ReceiveChannelMutex.Unlock()
 
+		//m.DebugPrint(fmt.Sprintf("Sending %x to %x\n", h[:], ss.Receiver[:]))
+
 		c <- SerializeNetworkMessage(NetworkTypes["Confirmation"], cs.SerializeConfirmationStruct())
-		timer1 := time.NewTimer(2 * time.Second)
+		timer1 := time.NewTimer(10 * time.Second)
 		select {
 		case <-ll:
 			c <- SerializeNetworkMessage(NetworkTypes["Send"], a)
 		case <-timer1.C:
-			//fmt.Printf("Rejected")
+
+			//m.DebugPrint(fmt.Sprintf("sending of %x timeout!!!!!!!!!!\n", h[:]))
 		}
 
 		m.ReceiveChannelMutex.Lock()
@@ -286,15 +281,24 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 	}
 
 	if !ok { // receiver unknown or everyone
+		var wg sync.WaitGroup
+
 		for _, c := range b.NetworkChannels {
 			if c != sd {
-				go confirmSend(c)
-				//c <- SerializeNetworkMessage(NetworkTypes["Send"], a)
+				wg.Add(1)
+				go func(c chan []byte) {
+					confirmSend(c)
+					wg.Done()
+				}(c)
+
+				wg.Wait()
+
 			}
 		}
 		return
 	}
-	go confirmSend(rc)
+
+	confirmSend(rc)
 	//rc <- SerializeNetworkMessage(NetworkTypes["Send"], a)
 }
 
@@ -328,25 +332,35 @@ func (m *Miner) ReceiveNetwork() {
 		case NetworkTypes["Request"]:
 			go m.ReceiveRequest(msg)
 		case NetworkTypes["Confirmation"]:
-			cs := DeserializeConfirmationStruct(msg)
-			m.ReceivedDataMutex.Lock()
-			_, ok := m.ReceivedData[cs.hash]
-			m.ReceivedDataMutex.Unlock()
-			if !ok {
-				val, ok2 := m.Broadcaster.Lookup[cs.sender]
-				if ok2 {
-					val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
+			go func() {
+				cs := DeserializeConfirmationStruct(msg)
+
+				m.ReceivedDataMutex.Lock()
+				_, ok := m.ReceivedData[cs.hash]
+				m.ReceivedDataMutex.Unlock()
+
+				if !ok {
+					val, ok2 := m.Broadcaster.Lookup[cs.sender]
+					if ok2 {
+						val <- SerializeNetworkMessage(NetworkTypes["ConfirmationAccept"], cs.response[:])
+					}
+				} else {
+					//m.DebugPrint(fmt.Sprintf("Ignoring sendrequest for %x", cs.hash))
 				}
-			}
+
+			}()
+
 		case NetworkTypes["ConfirmationAccept"]:
-			var resp [32]byte
-			copy(resp[0:32], msg[0:32])
-			m.ReceiveChannelMutex.Lock()
-			c, ok := m.ReceiveChannels[resp]
-			m.ReceiveChannelMutex.Unlock()
-			if ok {
-				c <- true
-			}
+			go func() {
+				var resp [32]byte
+				copy(resp[0:32], msg[0:32])
+				m.ReceiveChannelMutex.Lock()
+				c, ok := m.ReceiveChannels[resp]
+				m.ReceiveChannelMutex.Unlock()
+				if ok {
+					c <- true
+				}
+			}()
 
 		}
 
@@ -355,7 +369,6 @@ func (m *Miner) ReceiveNetwork() {
 
 // ReceiveSend decodes the sent data and updates internal structure with the new dat
 func (m *Miner) ReceiveSend(msg []byte) {
-
 	ss := DeserializeSendStruct(msg)
 
 	dataHash := sha256.Sum256(ss.data[:])
@@ -366,28 +379,21 @@ func (m *Miner) ReceiveSend(msg []byte) {
 
 	switch ss.SendType {
 	case SendType["BlockHeader"]:
+
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
 		bl := DeserializeBlock(a)
 
-		if m.BlockChain.addBlockChainNode(bl) {
-			if m.isMining {
-				m.interrupt <- true
-			}
-		}
+		m.BlockChain.addBlockChainNode(bl)
 	case SendType["TransactionBlockGroup"]:
-		m.BlockChain.AddData(ss.data[:])
+		go m.BlockChain.AddData(ss.data[:])
 	case SendType["HeaderAndTransactionBlockGroup"]:
 		var a [BlockSize]byte
 		copy(a[0:BlockSize], ss.data[0:BlockSize])
 		bl := DeserializeBlock(a)
 
-		if m.BlockChain.addBlockChainNode(bl) {
-			if m.isMining {
-				m.interrupt <- true
-			}
-		}
-		m.BlockChain.AddData(ss.data[:])
+		m.BlockChain.addBlockChainNode(bl)
+		go m.BlockChain.AddData(ss.data[:])
 	case SendType["Transaction"]:
 		fmt.Print("todo implement reception of transaction proof")
 	case SendType["Blockchain"]:
@@ -405,20 +411,26 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 		bl := m.BlockChain.GetBlockChainNodeAtHash(data)
 		if bl != nil {
 			blData := bl.Block.SerializeBlock()
-			go m.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
+			m.Send(SendType["BlockHeader"], blData[:], m.Wallet.PublicKey, rq.Requester)
 		}
 
 	case RequestType["BlockHeaderFromHeight"]:
-		fmt.Printf("todo implement blockheader from height request")
+		fmt.Printf("todo implement blockheader from height request\n")
 
 	case RequestType["TransactionBlockGroupFromHash"]:
+
 		var hash [32]byte
 		copy(hash[0:32], rq.data[0:32])
+
 		bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
+
 		if bl != nil {
 			if bl.DataPointer != nil {
 				blData := bl.DataPointer.SerializeTransactionBlockGroup()
-				go m.Send(SendType["TransactionBlockGroup"], blData[:], m.Wallet.PublicKey, rq.Requester)
+
+				//m.DebugPrint(fmt.Sprintf("Received request for data %x, merkle %x , hash %x\n", hash, bl.DataPointer.merkleTree.GetMerkleRoot(), bl.Hash))
+
+				m.Send(SendType["TransactionBlockGroup"], blData[:], m.Wallet.PublicKey, rq.Requester)
 			}
 		}
 

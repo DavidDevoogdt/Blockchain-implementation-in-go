@@ -95,6 +95,16 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 		succeeded = false
 		return
 	}
+	if bcn.PrevBlockChainNode == nil {
+		fmt.Printf("bcn has no pref blockchainnode, returning")
+		return false
+	}
+
+	//if um == nil {
+	//	fmt.Printf("um is nil, returning\n")
+	//	return false
+	//}
+
 	if bcn.PrevBlockChainNode != um.attachedBlockChainNode {
 		fmt.Printf("updating with the wrong blockchainnode, not updating")
 		return false
@@ -202,6 +212,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 		bcn.PrevBlockChainNode.UTxOManagerIsUpToDate = true
 		wgDeepCopy.Wait() //was done async, needs to be done now
 		bcn.PrevBlockChainNode.UTxOManagerPointer = umn
+		umn.attachedBlockChainNode = bcn.PrevBlockChainNode
 	} else {
 		bcn.PrevBlockChainNode.UTxOManagerIsUpToDate = false
 		bcn.PrevBlockChainNode.UTxOManagerPointer = nil

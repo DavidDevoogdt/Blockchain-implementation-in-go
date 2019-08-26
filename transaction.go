@@ -257,20 +257,22 @@ type TransactionBlockGroup struct {
 	TransactionBlockStructs []*TransactionBlock
 	merkleTree              *MerkleTree
 	finalized               bool
+	Height                  uint16
 }
 
 // SerializeTransactionBlockGroup makes it ready to send over network
 func (tbg *TransactionBlockGroup) SerializeTransactionBlockGroup() []byte {
-	totalSize := 1 + int(tbg.size)*2
+	totalSize := 3 + int(tbg.size)*2
 	for _, v := range tbg.lengths {
 		totalSize += int(v)
 	}
 	ret := make([]byte, totalSize)
 	ret[0] = tbg.size
+	binary.LittleEndian.PutUint16(ret[1:3], tbg.Height)
 	for i, v := range tbg.lengths {
-		binary.LittleEndian.PutUint16(ret[1+2*i:3+2*i], v)
+		binary.LittleEndian.PutUint16(ret[3+2*i:5+2*i], v)
 	}
-	index := 1 + int(tbg.size)*2
+	index := 3 + int(tbg.size)*2
 	for i, val := range tbg.TransactionBlocks {
 		length := int(tbg.lengths[i])
 		copy(ret[index:index+length], val[0:length])
@@ -283,17 +285,19 @@ func (tbg *TransactionBlockGroup) SerializeTransactionBlockGroup() []byte {
 func DeserializeTransactionBlockGroup(ret []byte, bc *BlockChain) *TransactionBlockGroup {
 	tbg := new(TransactionBlockGroup)
 	tbg.size = ret[0]
+	tbg.Height = binary.LittleEndian.Uint16(ret[1:3])
+
 	tbg.lengths = make([]uint16, tbg.size)
 	tbg.merkleTree = InitializeMerkleTree()
 
 	for i := 0; i < int(tbg.size); i++ {
-		tbg.lengths[i] = binary.LittleEndian.Uint16(ret[1+2*i : 3+2*i])
+		tbg.lengths[i] = binary.LittleEndian.Uint16(ret[3+2*i : 5+2*i])
 	}
 
 	tbg.TransactionBlocks = make([][]byte, tbg.size)
 	tbg.TransactionBlockStructs = make([]*TransactionBlock, tbg.size)
 
-	index := 1 + int(tbg.size)*2
+	index := 3 + int(tbg.size)*2
 	for i, Uint16Length := range tbg.lengths {
 		length := int(Uint16Length)
 		tbg.TransactionBlocks[i] = make([]byte, length)

@@ -42,9 +42,11 @@ func main() {
 			m.StartDebug()
 			NumberOfMiners++
 
-			//m.MineContiniously()
+			if NumberOfMiners%2 == 0 {
+				go m.MineContiniously()
+			}
 
-			if NumberOfMiners == 7 {
+			if NumberOfMiners == 6 {
 				return
 			}
 
@@ -58,7 +60,9 @@ func main() {
 		<-End
 		fmt.Printf("##########################################################################")
 		Miners[0].Print()
-		Miners[0].BlockChain.Head.UTxOManagerPointer.Print()
+		if Miners[0].BlockChain.Head.UTxOManagerIsUpToDate {
+			Miners[0].BlockChain.Head.UTxOManagerPointer.Print()
+		}
 
 		for i := 1; i < NumberOfMiners; i++ {
 			Miners[i].PrintHash(3)
