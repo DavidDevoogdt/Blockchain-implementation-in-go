@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -9,11 +10,13 @@ import (
 
 func main() {
 
-	NumberOfMiners := 1
+	NumberOfMiners := 6
 
 	broadcaster := NewBroadcaster("receive Channel")
 	fmt.Printf("made broadcaster\n")
 	Miners := make([]*Miner, NumberOfMiners)
+
+	var minersMutex sync.Mutex
 
 	Miners[0] = BlockChainGenesis(3, broadcaster)
 
@@ -26,27 +29,30 @@ func main() {
 		Miners[i] = CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
 	}
 
-	//Miners[0].StartDebug()
-
 	for i := 0; i < NumberOfMiners; i++ {
 		go Miners[i].MineContiniously()
 	}
 
-	InsertMiner := time.Tick(10000 * time.Millisecond)
+	InsertMiner := time.Tick(1000 * time.Millisecond)
 
 	go func() {
 		for {
 			<-InsertMiner
 			m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
-			Miners = append(Miners, m)
-			m.StartDebug()
-			NumberOfMiners++
 
-			if NumberOfMiners%2 == 0 {
+			minersMutex.Lock()
+			Miners = append(Miners, m)
+			NumberOfMiners++
+			n := NumberOfMiners
+			minersMutex.Unlock()
+
+			//m.StartDebug()
+
+			if n%2 == 0 {
 				go m.MineContiniously()
 			}
 
-			if NumberOfMiners == 6 {
+			if n == 20 {
 				return
 			}
 
@@ -58,15 +64,17 @@ func main() {
 
 	for {
 		<-End
-		fmt.Printf("##########################################################################")
-		Miners[0].Print()
-		if Miners[0].BlockChain.Head.UTxOManagerIsUpToDate {
-			Miners[0].BlockChain.Head.UTxOManagerPointer.Print()
-		}
 
+		fmt.Printf("##########################################################################")
+
+		minersMutex.Lock()
+		Miners[0].Print()
 		for i := 1; i < NumberOfMiners; i++ {
 			Miners[i].PrintHash(3)
+			//Miners[i].PrintHash(3)
 		}
+		minersMutex.Unlock()
+
 		fmt.Printf("##########################################################################")
 
 	}
@@ -88,4 +96,23 @@ func main() {
 
 		fmt.Printf("%t\n", mp.VerifyProofStruct(hash))
 	*/
+
+	//testFunc()
+}
+
+func testFunc() {
+	Endfunctions := make([]func(), 0)
+
+	defer func() {
+		for _, f := range Endfunctions {
+			f()
+		}
+	}()
+
+	defer fmt.Printf("later defer\n")
+
+	Endfunctions = append(Endfunctions, func() {
+		fmt.Printf("heey\n")
+
+	})
 }

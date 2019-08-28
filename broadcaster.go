@@ -4,6 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"math/rand"
+	"sync"
+
+	"github.com/sasha-s/go-deadlock"
 )
 
 // NetworkTypes represents categories which can be send over a network
@@ -159,10 +162,12 @@ func DeserializeConfirmationStruct(a []byte) *ConfirmationStruct {
 
 // Broadcaster groups subscribed miners
 type Broadcaster struct {
-	Lookup          map[[KeySize]byte]chan []byte
-	NetworkChannels []chan []byte
-	Name            string
-	Count           int
+	LookupMutex          deadlock.Mutex
+	Lookup               map[[KeySize]byte]chan []byte
+	NetworkChannels      []chan []byte
+	NetworkChannelsMutex sync.RWMutex
+	Name                 string
+	Count                int
 }
 
 // NewBroadcaster adds return new subscribed broadcaster
@@ -178,7 +183,11 @@ func NewBroadcaster(name string) *Broadcaster {
 }
 
 func (b *Broadcaster) append(network chan []byte, address [KeySize]byte) {
+	b.NetworkChannelsMutex.Lock()
 	b.NetworkChannels = append(b.NetworkChannels, network)
+	b.NetworkChannelsMutex.Unlock()
+	b.LookupMutex.Lock()
 	b.Lookup[address] = network
+	b.LookupMutex.Unlock()
 	b.Count++
 }

@@ -3,16 +3,22 @@ package main
 import (
 	"fmt"
 	"sync"
+
+	"github.com/sasha-s/go-deadlock"
 )
 
 // UTxOManager keeps track of unspent transaction outputs (utxo)
 type UTxOManager struct {
 	attachedBlockChainNode *BlockChainNode
-	UtxOMap                map[[32]byte]map[uint8]map[uint8]bool //merkleroot -> tx number -> output number
-	mapMutex               sync.RWMutex
-	secondLayerMutexes     [256]sync.RWMutex
-	thirdLayerMutexes      [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block hash. This is lightweight and still faster than using a single mutex for all
 	Miner                  *Miner
+
+	umMutex deadlock.RWMutex
+
+	UtxOMap            map[[32]byte]map[uint8]map[uint8]bool //merkleroot -> tx number -> output number
+	mapMutex           sync.RWMutex
+	secondLayerMutexes [256]sync.RWMutex
+	thirdLayerMutexes  [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block hash. This is lightweight and still faster than using a single mutex for all
+
 }
 
 // InitializeUTxOMananger is used to initialize the blockchain
@@ -77,7 +83,18 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 	var wgDeepCopy sync.WaitGroup
 
+	bcn.generalMutex.RLock()
+	_prevBCN := bcn.PrevBlockChainNode
+	tbg := bcn.DataPointer
+	bcn.generalMutex.RUnlock()
+
+	um.umMutex.RLock()
+	_attachedBCN := um.attachedBlockChainNode
+	_miner := um.Miner
+	um.umMutex.RUnlock()
+
 	var umn *UTxOManager
+	_ = umn
 	if deepCopy {
 		wgDeepCopy.Add(1)
 		go func() {
@@ -86,32 +103,28 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 		}()
 
 	}
-	_ = umn
-
-	tbg := bcn.DataPointer
 
 	if tbg == nil {
-		fmt.Printf("No data attached to block, not updating")
+		_miner.DebugPrint(fmt.Sprintf("No data attached to block, not updating"))
 		succeeded = false
 		return
 	}
-	if bcn.PrevBlockChainNode == nil {
-		fmt.Printf("bcn has no pref blockchainnode, returning")
+	if _prevBCN == nil {
+		_miner.DebugPrint(fmt.Sprintf("bcn has no pref blockchainnode, returning"))
 		return false
 	}
 
-	//if um == nil {
-	//	fmt.Printf("um is nil, returning\n")
-	//	return false
-	//}
-
-	if bcn.PrevBlockChainNode != um.attachedBlockChainNode {
-		fmt.Printf("updating with the wrong blockchainnode, not updating")
+	if _prevBCN != _attachedBCN {
+		_miner.DebugPrint(fmt.Sprintf("updating with the wrong blockchainnode, not updating"))
 		return false
 	}
+
+	_prevBCN.generalMutex.RLock()
+
 	if !bcn.PrevBlockChainNode.UTxOManagerIsUpToDate {
-		fmt.Printf("Previous utxo manager was not up to date, stopping ")
+		_miner.DebugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping "))
 	}
+	_prevBCN.generalMutex.RUnlock()
 
 	var waitGroup sync.WaitGroup
 
@@ -128,7 +141,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 					um.mapMutex.RUnlock()
 
 					if !ok {
-						fmt.Printf("UTxO was not in sync, merkle missing!, utxo corrupted")
+						_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, merkle missing!, utxo corrupted"))
 						succeeded = false
 
 					}
@@ -138,7 +151,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 					um.secondLayerMutexes[tr.OutputNumber].RUnlock()
 
 					if !ok2 {
-						fmt.Printf("UTxO was not in sync, transaction block missing!, utxo corrupted")
+						_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, transaction block missing!, utxo corrupted"))
 						succeeded = false
 					}
 
@@ -147,7 +160,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 					um.thirdLayerMutexes[tr.OutputNumber].RUnlock()
 
 					if !ok3 {
-						fmt.Printf("UTxO was not in sync, transaction output missing!, utxo corrupted")
+						_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, transaction output missing!, utxo corrupted"))
 						succeeded = false
 					}
 
@@ -202,24 +215,35 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	waitGroup.Wait()
 
 	if !succeeded {
-		fmt.Printf("Some record could not be correctly updated in the map, probably missing")
+		_miner.DebugPrint(fmt.Sprintf("Some record could not be correctly updated in the map, probably missing"))
 		return
 	}
 
+	um.umMutex.Lock()
 	um.attachedBlockChainNode = bcn
+	_attachedBCN = bcn
+	um.umMutex.Unlock()
 
+	_prevBCN.generalMutex.Lock()
 	if deepCopy {
-		bcn.PrevBlockChainNode.UTxOManagerIsUpToDate = true
-		wgDeepCopy.Wait() //was done async, needs to be done now
-		bcn.PrevBlockChainNode.UTxOManagerPointer = umn
-		umn.attachedBlockChainNode = bcn.PrevBlockChainNode
+		_prevBCN.UTxOManagerIsUpToDate = true
+		_prevBCN.generalMutex.Unlock()
+		wgDeepCopy.Wait() //was done async, needs to be done now. Lock released for speed
+
+		_prevBCN.generalMutex.Lock()
+		_prevBCN.UTxOManagerPointer = umn
+		umn.attachedBlockChainNode = _prevBCN
 	} else {
 		bcn.PrevBlockChainNode.UTxOManagerIsUpToDate = false
 		bcn.PrevBlockChainNode.UTxOManagerPointer = nil
-	}
 
-	um.attachedBlockChainNode.UTxOManagerIsUpToDate = true
-	um.attachedBlockChainNode.UTxOManagerPointer = um
+	}
+	_prevBCN.generalMutex.Unlock()
+
+	_attachedBCN.generalMutex.Lock()
+	_attachedBCN.UTxOManagerIsUpToDate = true
+	_attachedBCN.UTxOManagerPointer = um
+	_attachedBCN.generalMutex.Unlock()
 
 	return true
 }
@@ -228,7 +252,11 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 func (um *UTxOManager) Deepcopy() *UTxOManager {
 	var wg sync.WaitGroup
 	umCopy := new(UTxOManager)
+
+	um.umMutex.Lock()
 	umCopy.attachedBlockChainNode = um.attachedBlockChainNode
+	um.umMutex.Unlock()
+
 	umCopy.UtxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
 
 	// acquire all locks for second layer

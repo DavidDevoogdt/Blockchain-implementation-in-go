@@ -25,14 +25,16 @@ type Miner struct {
 	Debug    bool
 	isMining bool
 
+	GeneralMutex sync.Mutex
+
 	ReceivedData      map[[32]byte]bool
 	ReceivedDataMutex sync.Mutex
 
 	ReceiveChannels     map[[32]byte]chan bool
 	ReceiveChannelMutex sync.Mutex
 
-	SynchronousReceiveChannelsMutex sync.Mutex
 	SynchronousReceiveChannels      map[[32]byte]chan []byte
+	SynchronousReceiveChannelsMutex sync.Mutex
 }
 
 //###################one time init###################
@@ -91,16 +93,23 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 
 // StartDebug starts debug logging
 func (m *Miner) StartDebug() {
+	m.GeneralMutex.Lock()
 	m.Debug = true
+	m.GeneralMutex.Unlock()
 }
 
 //###############actual mining #######################""
 
 // MineBlock mines block and add own credentials
 func (m *Miner) MineBlock(newBlock *Block) *Block {
+	m.GeneralMutex.Lock()
 	m.isMining = true
+	m.GeneralMutex.Unlock()
+
 	defer func() {
+		m.GeneralMutex.Lock()
 		m.isMining = false
+		m.GeneralMutex.Unlock()
 	}()
 
 	for {
@@ -138,7 +147,6 @@ func (m *Miner) MineContiniously() {
 				m.DebugPrint(fmt.Sprintf("%s was not fast enough \n", m.Name))
 			} else {
 				m.DebugPrint(fmt.Sprintf("%s mined block: \n", m.Name))
-
 				m.BlockChain.AddInternal(blc, tbg)
 
 				m.BroadcastBlock(blc)
@@ -155,9 +163,21 @@ func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
 
 	m.DebugPrint(" started preparing tbg for mining\n")
 
-	head := m.BlockChain.Head
+	m.GeneralMutex.Lock()
+	bc := m.BlockChain
+	m.GeneralMutex.Unlock()
 
-	if !head.UTxOManagerIsUpToDate {
+	bc.BlockChainMutex.Lock()
+	head := bc.Head
+	bc.BlockChainMutex.Unlock()
+
+	head.generalMutex.RLock()
+	headUTxOManagerIsUpToDate := head.UTxOManagerIsUpToDate
+	headUTxOManagerPointer := head.UTxOManagerPointer
+	prevBlock := head.Block
+	head.generalMutex.RUnlock()
+
+	if !headUTxOManagerIsUpToDate {
 		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning\n"))
 	}
 
@@ -175,12 +195,11 @@ func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
 	}()
 
 	go func() {
-		goodRef <- m.BlockChain.Head.UTxOManagerPointer.VerifyTransactionBlockRefs(tbg)
+		goodRef <- headUTxOManagerPointer.VerifyTransactionBlockRefs(tbg)
 	}()
 
 	//m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
 	//m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
-	prevBlock := m.BlockChain.Head.Block
 
 	newBlock := new(Block)
 	newBlock.BlockCount = prevBlock.BlockCount + 1
@@ -210,6 +229,10 @@ func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
 //DebugPrint print if debug is on
 func (m *Miner) DebugPrint(msg string) {
 	if m != nil {
+
+		m.GeneralMutex.Lock()
+		defer m.GeneralMutex.Unlock()
+
 		if m.Debug {
 			fmt.Printf("miner %s---- %s", m.Name, msg)
 		}
@@ -218,18 +241,26 @@ func (m *Miner) DebugPrint(msg string) {
 
 // Print print
 func (m *Miner) Print() {
+	m.GeneralMutex.Lock()
 	fmt.Printf("\n-----------------------------\n")
 	fmt.Printf("name miner: %s\n", m.Name)
-	m.BlockChain.Print()
+	bc := m.BlockChain
+	m.GeneralMutex.Unlock()
+
+	bc.Print()
 	fmt.Printf("\n-----------------------------\n")
 }
 
 // PrintHash print
 func (m *Miner) PrintHash(n int) {
+	m.GeneralMutex.Lock()
 	fmt.Printf("\n-----------------------------\n")
 	k := m.Wallet.PublicKey
+	bc := m.BlockChain
 	fmt.Printf("name miner: %s (%x)\n", m.Name, k[len(k)-10:])
-	m.BlockChain.PrintHash(n)
+	m.GeneralMutex.Unlock()
+
+	bc.PrintHash(n)
 	fmt.Printf("\n-----------------------------\n")
 
 }
@@ -248,8 +279,10 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 	ss.Receiver = receiver
 	a := ss.SerializeSendStruct()
 
+	b.LookupMutex.Lock()
 	rc, ok := b.Lookup[receiver]
 	sd, _ := b.Lookup[sender]
+	b.LookupMutex.Unlock()
 
 	h := ss.ConfirmationHash()
 
@@ -283,6 +316,7 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 	if !ok { // receiver unknown or everyone
 		var wg sync.WaitGroup
 
+		b.NetworkChannelsMutex.RLock()
 		for _, c := range b.NetworkChannels {
 			if c != sd {
 				wg.Add(1)
@@ -295,6 +329,7 @@ func (m *Miner) Send(sendType uint8, data []byte, sender [KeySize]byte, receiver
 
 			}
 		}
+		b.NetworkChannelsMutex.RUnlock()
 		return
 	}
 
@@ -316,9 +351,11 @@ func (m *Miner) Request(RequestType uint8, Requester [KeySize]byte, data []byte)
 	a := rq.SerializeRequestStruct()
 
 	//requester := b.Lookup[Requester]
+	b.NetworkChannelsMutex.RLock()
 	for _, c := range b.NetworkChannels {
 		c <- SerializeNetworkMessage(NetworkTypes["Request"], a)
 	}
+	b.NetworkChannelsMutex.RUnlock()
 
 }
 
@@ -425,8 +462,12 @@ func (m *Miner) ReceiveRequest(msg []byte) {
 		bl := m.BlockChain.GetBlockChainNodeAtHash(hash)
 
 		if bl != nil {
-			if bl.DataPointer != nil {
-				blData := bl.DataPointer.SerializeTransactionBlockGroup()
+			bl.generalMutex.RLock()
+			blDataPointer := bl.DataPointer
+			bl.generalMutex.RUnlock()
+
+			if blDataPointer != nil {
+				blData := blDataPointer.SerializeTransactionBlockGroup()
 
 				//m.DebugPrint(fmt.Sprintf("Received request for data %x, merkle %x , hash %x\n", hash, bl.DataPointer.merkleTree.GetMerkleRoot(), bl.Hash))
 
