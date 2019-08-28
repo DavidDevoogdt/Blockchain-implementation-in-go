@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"sync"
-
-	"github.com/sasha-s/go-deadlock"
 )
 
 // NetworkTypes represents categories which can be send over a network
@@ -43,7 +41,6 @@ var RequestTypeSize = map[uint8]uint16{ //size of data
 	0: KeySize,
 	1: 4,
 	2: KeySize,
-	3: TransactionRequestSize,
 }
 
 // SendType maps the int to a human readable type
@@ -162,7 +159,7 @@ func DeserializeConfirmationStruct(a []byte) *ConfirmationStruct {
 
 // Broadcaster groups subscribed miners
 type Broadcaster struct {
-	LookupMutex          deadlock.Mutex
+	LookupMutex          sync.Mutex
 	Lookup               map[[KeySize]byte]chan []byte
 	NetworkChannels      []chan []byte
 	NetworkChannelsMutex sync.RWMutex

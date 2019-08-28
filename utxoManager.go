@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"sync"
-
-	"github.com/sasha-s/go-deadlock"
 )
 
 // UTxOManager keeps track of unspent transaction outputs (utxo)
@@ -12,7 +10,7 @@ type UTxOManager struct {
 	attachedBlockChainNode *BlockChainNode
 	Miner                  *Miner
 
-	umMutex deadlock.RWMutex
+	umMutex sync.RWMutex
 
 	UtxOMap            map[[32]byte]map[uint8]map[uint8]bool //merkleroot -> tx number -> output number
 	mapMutex           sync.RWMutex

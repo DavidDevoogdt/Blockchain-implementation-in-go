@@ -6,45 +6,17 @@ import (
 	"sync"
 )
 
-/*
-rules for manipulation:
-blockchainnodes need to be writen by asynchronous request to blockchainwriter to avoid deadlock
-the blockchainwrite will return with the channel in the struct
-Each function claims and releases its own locks, during locking no external function can be called synchronously
-
-for nested functions:
-______________________
-
-ClosingChans := make([]chan bool, 0)
-
-read state, make sure nothing blocks
-...
-
-to write:
-
-_BlockChan := make(chan bool)
-_Block.writeRequest <- WriteRequest{
-	func() {
-		// do stuf with _block
-	}, _BlockChan}
-
-ClosingChans = append(ClosingChans, _BlockChan)
-
-....
-after, close all readlocks
-for _, c := range ClosingChans {
-	<-c
-}
-
-*/
-
-// BlockChain is keeps track of known heads of tree
+// BlockChain keeps the general infromation of all the incoming blocks.
+// The most inportant functions related to the blockchain are addBlockChainNode and verifyAndBuildDown
+// addBlockChainNode adds a block based on its hash and does internal bookkeeping of the tree. If the block does not fit in the tree, a seperate orphanblockchain is created
+// The previous blocks are requested if needed. verifyAndBuildDown updates the the unspent transaction output mananger. Here it is checked whether the block and its data is vallid
 type BlockChain struct {
+	BlockChainMutex   sync.RWMutex
 	Head              *BlockChainNode
 	Root              *BlockChainNode
 	OrphanBlockChains []*BlockChain
 	IsOrphan          bool
-	BlockChainMutex   sync.RWMutex
+	Height            uint32
 
 	utxoChan         chan *BlockChainNode
 	AllNodesMap      map[[32]byte]*BlockChainNode
@@ -58,10 +30,8 @@ type BlockChain struct {
 
 	MerkleRootToBlockHashMap      map[[32]byte][32]byte
 	MerkleRootToBlockHashMapMutex sync.RWMutex
-	// const
-	Miner *Miner
 
-	Height uint32
+	Miner *Miner
 }
 
 // BlockChainNode links block to previous parent
@@ -85,87 +55,7 @@ type BlockChainNode struct {
 	//writeRequest chan WriteRequest
 }
 
-/*
-type WriteRequest struct {
-	f func()
-	c chan bool
-}
-
-// BlockChainNodeUpdater All the writes are performed from this function run in a separate goroutine
-func (bcn *BlockChainNode) BlockChainNodeUpdater() {
-	for {
-		s, ok := <-bcn.writeRequest
-		bcn.generalMutex.Lock()
-		s.f()
-		bcn.generalMutex.Unlock()
-		go func() {
-			s.c <- ok
-		}()
-	}
-}*/
-
-// HasBlock determines whether block is in chain
-func (bc *BlockChain) HasBlock(hash [32]byte) bool {
-	bc.AllNodesMapMutex.Lock()
-	_, ok := bc.AllNodesMap[hash]
-	bc.AllNodesMapMutex.Unlock()
-	return ok
-}
-
-// GetBlockChainNodeAtHeight returns block of main chain at specific height
-func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
-	//bc.BlockChainMutex.RLock()
-	//defer bc.BlockChainMutex.RUnlock()
-
-	current := bc.Head
-
-	max := current.Block.BlockCount
-
-	if height > max {
-		return nil
-	}
-
-	for i := uint32(0); i < max-height; i++ {
-
-		current.generalMutex.RLock()
-		defer current.generalMutex.RUnlock()
-		current = current.PrevBlockChainNode
-	}
-
-	//bc.Miner.DebugPrint(("requested %d, got %d", height, current.Block.BlockCount)
-
-	return current
-}
-
-// GetBlockChainNodeAtHash fetches block
-func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
-	bc.AllNodesMapMutex.Lock()
-	val, ok := bc.AllNodesMap[hash]
-	bc.AllNodesMapMutex.Unlock()
-
-	if ok {
-		return val
-	}
-
-	bc.BlockChainMutex.Lock()
-	for _, obc := range bc.OrphanBlockChains {
-		bc.BlockChainMutex.Unlock()
-		val := obc.GetBlockChainNodeAtHash(hash)
-		if val != nil {
-			return val
-		}
-		bc.BlockChainMutex.Lock()
-	}
-	bc.BlockChainMutex.Unlock()
-
-	return nil
-}
-
-// GetTransactionOutput turns reference into locally saved version
-func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) *TransactionOutput {
-	// todo verifiy this data is present
-	return bc.AllNodesMap[tr.BlockHash].DataPointer.TransactionBlockStructs[tr.TransactionBlockNumber].OutputList[tr.OutputNumber]
-}
+//#########core
 
 // return bool specifies whether miner should stop immediately
 // has no nested locks
@@ -480,45 +370,6 @@ func (bc *BlockChain) AddData(data []byte) {
 
 }
 
-// BlockChainGenesis creates first miner, mines first block and initiates the blockchain
-func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
-
-	bl := new(BlockChainNode)
-	bl.PrevBlockChainNode = bl
-	bl.dataHasArrived = make(chan bool)
-
-	bc := new(BlockChain)
-	bc.AllNodesMap = make(map[[32]byte]*BlockChainNode)
-	bc.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
-	bc.OrphanBlockChains = make([]*BlockChain, 0)
-	bc.IsOrphan = false
-	bc.Root = bl
-
-	bc.utxoChan = make(chan *BlockChainNode)
-
-	genesisMiner := CreateGenesisMiner("genesis", broadcaster, bc)
-	bc.Miner = genesisMiner
-	gen := generateGenesis(difficulty, genesisMiner)
-	bl.Block = gen
-	bl.Hash = bl.Block.Hash()
-
-	bc.Head = bl
-	bc.Miner.Debug = false
-	bc.AllNodesMap[bl.Hash] = bl
-	bc.DanglingData = make(map[[32]byte]*TransactionBlockGroup)
-	bc.MerkleRootToBlockHashMap = make(map[[32]byte][32]byte)
-
-	bl.HasData = false
-	bl.UTxOManagerIsUpToDate = true
-	bl.UTxOManagerPointer = InitializeUTxOMananger(genesisMiner)
-
-	bl.dataHasArrived = make(chan bool)
-
-	go bc.utxoUpdater()
-
-	return genesisMiner
-}
-
 // VerifyHash checks to blockchain from head to root
 func (bc *BlockChain) VerifyHash() bool {
 	BlockChainNode := bc.Head
@@ -535,6 +386,218 @@ func (bc *BlockChain) VerifyHash() bool {
 	return true
 }
 
+// utxoUpdater makes sure one thread at a time is updating the utxo manager
+func (bc *BlockChain) utxoUpdater() {
+	for {
+		bcn := <-bc.utxoChan
+		bc.verifyAndBuildDown(bcn)
+	}
+}
+
+// verifyAndBuildDown request data if necesarry, builds utxo manager from bottum up from last know good state, redirects the upwards links an stores savepoints
+func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
+
+	bcn.generalMutex.RLock()
+	_prevBCN := bcn.PrevBlockChainNode
+	_prevHash := bcn.Block.PrevHash
+	bcnUTxOManagerIsUpToDate := bcn.UTxOManagerIsUpToDate
+	bcnHasData := bcn.HasData
+	_newHeight := bcn.Block.BlockCount
+	bcn.generalMutex.RUnlock()
+
+	bc.BlockChainMutex.RLock()
+	bcIsOrphan := bc.IsOrphan
+	bcMiner := bc.Miner
+	bc.BlockChainMutex.RUnlock()
+
+	_prevBCN.generalMutex.Lock()
+	_prevBCN.NextBlockChainNode = bcn // to restore ability to crawl back up
+	prevUTxOUptodate := bcn.PrevBlockChainNode.UTxOManagerIsUpToDate
+	prevblockcount := _prevBCN.Block.BlockCount
+	_prevBCN.generalMutex.Unlock()
+
+	if bcIsOrphan {
+		bc.Miner.DebugPrint("orphans cannot build utxo, returning\n")
+		return
+	}
+
+	if bcnUTxOManagerIsUpToDate {
+		bcMiner.DebugPrint("txo manager already up to date\n")
+		return
+	}
+
+	var waitingfordata = false
+	if !bcnHasData {
+
+		bc.DanglingDataMutex.Lock()
+		d, ok := bc.DanglingData[bcn.Block.MerkleRoot]
+		bc.DanglingDataMutex.Unlock()
+
+		if !ok {
+			var req [32]byte
+
+			bcn.generalMutex.RLock()
+			copy(req[0:32], bcn.Hash[0:32])
+			bcn.generalMutex.RUnlock()
+
+			go bc.Miner.Request(RequestType["TransactionBlockGroupFromHash"], bc.Miner.Wallet.PublicKey, req[0:32])
+			waitingfordata = true
+			bcMiner.DebugPrint(fmt.Sprintf("Requesting transactiondata for block %d: %x \n", _newHeight, req[0:32]))
+		} else {
+			bcMiner.DebugPrint(fmt.Sprintf("found data dangling for block %d: %x \n", bcn.Block.BlockCount, bcn.Hash[:]))
+			bc.MerkleRootToBlockHashMapMutex.Lock()
+			delete(bc.MerkleRootToBlockHashMap, bcn.Block.MerkleRoot)
+			bc.MerkleRootToBlockHashMapMutex.Unlock()
+
+			bcn.generalMutex.Lock()
+			bcn.DataPointer = d
+			bcn.HasData = true
+			bcn.generalMutex.Unlock()
+		}
+
+	}
+
+	if !prevUTxOUptodate {
+		bc.Miner.DebugPrint(fmt.Sprintf("also updating previous block %d \n", prevblockcount))
+		//make sure all locks are released
+		bc.verifyAndBuildDown(_prevBCN)
+
+	} //by the time this ends, all previous blocks are updated
+
+	if waitingfordata {
+		<-bcn.dataHasArrived
+		bc.Miner.DebugPrint(fmt.Sprintf("Requesting transactiondata for block %d arrived ! \n", _newHeight))
+	}
+
+	bcn.generalMutex.Lock()
+	bcnTbs := bcn.DataPointer
+	bcn.generalMutex.Unlock()
+
+	_prevBCN.generalMutex.RLock()
+	prevUTXO := _prevBCN.UTxOManagerPointer
+	_prevBCN.generalMutex.RUnlock()
+
+	goodTransactions := prevUTXO.VerifyTransactionBlockRefs(bcnTbs)
+	goodSignatures := bcnTbs.VerifyExceptUTXO()
+
+	bcn.generalMutex.Lock()
+	if !goodTransactions {
+		bcn.Badblock = true
+		bcMiner.DebugPrint("found bad block, transactions not matchin\n")
+	}
+
+	if !goodSignatures { // todo check previous blocks!
+		bcn.Badblock = true
+		bcMiner.DebugPrint("False signatures, not continuing\n")
+	}
+
+	bcn.VerifiedWithUtxoManager = true
+	bcn.generalMutex.Unlock()
+
+	bc.BlockChainMutex.RLock()
+	bcheight := bc.Height
+	bc.BlockChainMutex.RUnlock()
+
+	if _newHeight > bcheight {
+
+		bc.OtherHeadNodesMutex.Lock()
+		_, ok3 := bc.OtherHeadNodes[_prevHash]
+		if ok3 {
+			bc.OtherHeadNodes[bc.Head.Hash] = bc.Head
+			delete(bc.OtherHeadNodes, bcn.PrevBlockChainNode.Hash)
+		}
+		bc.OtherHeadNodesMutex.Unlock()
+
+		bc.BlockChainMutex.Lock()
+		bc.Head = bcn
+		bc.Height = _newHeight
+		bc.BlockChainMutex.Unlock()
+
+		bcMiner.GeneralMutex.Lock()
+		if bcMiner.isMining {
+			bcMiner.interrupt <- true
+		}
+		bcMiner.GeneralMutex.Unlock()
+
+		bcMiner.DebugPrint("Updated the head after verification")
+	}
+
+	keepCopy := _newHeight%5 == 1
+
+	succes := prevUTXO.UpdateWithNextBlockChainNode(bcn, keepCopy)
+	if !succes {
+		log.Fatal("updating utxoManager Failed, should not happen!\n")
+		return
+	}
+	bcMiner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
+
+}
+
+//####### helpfunctions
+// HasBlock determines whether block is in chain
+func (bc *BlockChain) HasBlock(hash [32]byte) bool {
+	bc.AllNodesMapMutex.Lock()
+	_, ok := bc.AllNodesMap[hash]
+	bc.AllNodesMapMutex.Unlock()
+	return ok
+}
+
+// GetBlockChainNodeAtHeight returns block of main chain at specific height
+func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
+	//bc.BlockChainMutex.RLock()
+	//defer bc.BlockChainMutex.RUnlock()
+
+	current := bc.Head
+
+	max := current.Block.BlockCount
+
+	if height > max {
+		return nil
+	}
+
+	for i := uint32(0); i < max-height; i++ {
+
+		current.generalMutex.RLock()
+		defer current.generalMutex.RUnlock()
+		current = current.PrevBlockChainNode
+	}
+
+	//bc.Miner.DebugPrint(("requested %d, got %d", height, current.Block.BlockCount)
+
+	return current
+}
+
+// GetBlockChainNodeAtHash fetches block
+func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
+	bc.AllNodesMapMutex.Lock()
+	val, ok := bc.AllNodesMap[hash]
+	bc.AllNodesMapMutex.Unlock()
+
+	if ok {
+		return val
+	}
+
+	bc.BlockChainMutex.Lock()
+	for _, obc := range bc.OrphanBlockChains {
+		bc.BlockChainMutex.Unlock()
+		val := obc.GetBlockChainNodeAtHash(hash)
+		if val != nil {
+			return val
+		}
+		bc.BlockChainMutex.Lock()
+	}
+	bc.BlockChainMutex.Unlock()
+
+	return nil
+}
+
+// GetTransactionOutput turns reference into locally saved version
+func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) *TransactionOutput {
+	// todo verifiy this data is present
+	return bc.AllNodesMap[tr.BlockHash].DataPointer.TransactionBlockStructs[tr.TransactionBlockNumber].OutputList[tr.OutputNumber]
+}
+
+//########### non core
 // Print print
 func (bc *BlockChain) Print() {
 
@@ -701,157 +764,41 @@ func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 	return blockChain
 }
 
-// utxoUpdater makes sure one thread at a time is updating the utxo manager
-func (bc *BlockChain) utxoUpdater() {
-	for {
-		bcn := <-bc.utxoChan
-		bc.verifyAndBuildDown(bcn)
-	}
-}
+// BlockChainGenesis creates first miner, mines first block and initiates the blockchain
+func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 
-// verifyAndBuildDown request data if necesarry, builds utxo manager from bottum up from last know good state, redirects the upwards links an stores savepoints
-//
-func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
+	bl := new(BlockChainNode)
+	bl.PrevBlockChainNode = bl
+	bl.dataHasArrived = make(chan bool)
 
-	bcn.generalMutex.RLock()
-	_prevBCN := bcn.PrevBlockChainNode
-	_prevHash := bcn.Block.PrevHash
-	bcnUTxOManagerIsUpToDate := bcn.UTxOManagerIsUpToDate
-	bcnHasData := bcn.HasData
-	_newHeight := bcn.Block.BlockCount
-	bcn.generalMutex.RUnlock()
+	bc := new(BlockChain)
+	bc.AllNodesMap = make(map[[32]byte]*BlockChainNode)
+	bc.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
+	bc.OrphanBlockChains = make([]*BlockChain, 0)
+	bc.IsOrphan = false
+	bc.Root = bl
 
-	bc.BlockChainMutex.RLock()
-	bcIsOrphan := bc.IsOrphan
-	bcMiner := bc.Miner
-	bc.BlockChainMutex.RUnlock()
+	bc.utxoChan = make(chan *BlockChainNode)
 
-	_prevBCN.generalMutex.Lock()
-	_prevBCN.NextBlockChainNode = bcn // to restore ability to crawl back up
-	prevUTxOUptodate := bcn.PrevBlockChainNode.UTxOManagerIsUpToDate
-	prevblockcount := _prevBCN.Block.BlockCount
-	_prevBCN.generalMutex.Unlock()
+	genesisMiner := CreateGenesisMiner("genesis", broadcaster, bc)
+	bc.Miner = genesisMiner
+	gen := generateGenesis(difficulty, genesisMiner)
+	bl.Block = gen
+	bl.Hash = bl.Block.Hash()
 
-	if bcIsOrphan {
-		bc.Miner.DebugPrint("orphans cannot build utxo, returning\n")
-		return
-	}
+	bc.Head = bl
+	bc.Miner.Debug = false
+	bc.AllNodesMap[bl.Hash] = bl
+	bc.DanglingData = make(map[[32]byte]*TransactionBlockGroup)
+	bc.MerkleRootToBlockHashMap = make(map[[32]byte][32]byte)
 
-	if bcnUTxOManagerIsUpToDate {
-		bcMiner.DebugPrint("txo manager already up to date\n")
-		return
-	}
+	bl.HasData = false
+	bl.UTxOManagerIsUpToDate = true
+	bl.UTxOManagerPointer = InitializeUTxOMananger(genesisMiner)
 
-	var waitingfordata = false
-	if !bcnHasData {
+	bl.dataHasArrived = make(chan bool)
 
-		bc.DanglingDataMutex.Lock()
-		d, ok := bc.DanglingData[bcn.Block.MerkleRoot]
-		bc.DanglingDataMutex.Unlock()
+	go bc.utxoUpdater()
 
-		if !ok {
-			var req [32]byte
-
-			bcn.generalMutex.RLock()
-			copy(req[0:32], bcn.Hash[0:32])
-			bcn.generalMutex.RUnlock()
-
-			go bc.Miner.Request(RequestType["TransactionBlockGroupFromHash"], bc.Miner.Wallet.PublicKey, req[0:32])
-			waitingfordata = true
-			bcMiner.DebugPrint(fmt.Sprintf("Requesting transactiondata for block %d: %x \n", _newHeight, req[0:32]))
-		} else {
-			bcMiner.DebugPrint(fmt.Sprintf("found data dangling for block %d: %x \n", bcn.Block.BlockCount, bcn.Hash[:]))
-			bc.MerkleRootToBlockHashMapMutex.Lock()
-			delete(bc.MerkleRootToBlockHashMap, bcn.Block.MerkleRoot)
-			bc.MerkleRootToBlockHashMapMutex.Unlock()
-
-			bcn.generalMutex.Lock()
-			bcn.DataPointer = d
-			bcn.HasData = true
-			bcn.generalMutex.Unlock()
-		}
-
-	}
-
-	if !prevUTxOUptodate {
-		bc.Miner.DebugPrint(fmt.Sprintf("also updating previous block %d \n", prevblockcount))
-		//make sure all locks are released
-		bc.verifyAndBuildDown(_prevBCN)
-
-	} //by the time this ends, all previous blocks are updated
-
-	if waitingfordata {
-		<-bcn.dataHasArrived
-		bc.Miner.DebugPrint(fmt.Sprintf("Requesting transactiondata for block %d arrived ! \n", _newHeight))
-	}
-
-	bcn.generalMutex.Lock()
-	bcnTbs := bcn.DataPointer.TransactionBlockStructs
-	bcn.generalMutex.Unlock()
-
-	_prevBCN.generalMutex.RLock()
-	prevUTXO := _prevBCN.UTxOManagerPointer
-	_prevBCN.generalMutex.RUnlock()
-
-	goodTransactions := prevUTXO.VerifyTransactionBlockRefs(bcn.DataPointer)
-
-	goodSignatures := true
-	for _, tb := range bcnTbs {
-		if !tb.VerifyInputSignatures() {
-			goodSignatures = false
-			break
-		}
-	}
-
-	bcn.generalMutex.Lock()
-	if !goodTransactions {
-		bcn.Badblock = true
-		bcMiner.DebugPrint("found bad block, transactions not matchin\n")
-	}
-
-	if !goodSignatures { // todo check previous blocks!
-		bcn.Badblock = true
-		bcMiner.DebugPrint("False signatures, not continuing\n")
-	}
-
-	bcn.VerifiedWithUtxoManager = true
-	bcn.generalMutex.Unlock()
-
-	bc.BlockChainMutex.RLock()
-	bcheight := bc.Height
-	bc.BlockChainMutex.RUnlock()
-
-	if _newHeight > bcheight {
-
-		bc.OtherHeadNodesMutex.Lock()
-		_, ok3 := bc.OtherHeadNodes[_prevHash]
-		if ok3 {
-			bc.OtherHeadNodes[bc.Head.Hash] = bc.Head
-			delete(bc.OtherHeadNodes, bcn.PrevBlockChainNode.Hash)
-		}
-		bc.OtherHeadNodesMutex.Unlock()
-
-		bc.BlockChainMutex.Lock()
-		bc.Head = bcn
-		bc.Height = _newHeight
-		bc.BlockChainMutex.Unlock()
-
-		bcMiner.GeneralMutex.Lock()
-		if bcMiner.isMining {
-			bcMiner.interrupt <- true
-		}
-		bcMiner.GeneralMutex.Unlock()
-
-		bcMiner.DebugPrint("Updated the head after verification")
-	}
-
-	keepCopy := _newHeight%5 == 1
-
-	succes := prevUTXO.UpdateWithNextBlockChainNode(bcn, keepCopy)
-	if !succes {
-		log.Fatal("updating utxoManager Failed, should not happen!\n")
-		return
-	}
-	bcMiner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
-
+	return genesisMiner
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -128,9 +129,18 @@ func (m *Miner) MineBlock(newBlock *Block) *Block {
 
 // MineContiniously does what it says
 func (m *Miner) MineContiniously() {
+	i := uint32(0)
 	for {
 		tb := InitializeTransactionBlock()
-		tb.AddOutput(&TransactionOutput{Amount: 1e18 + uint64(rand.Int63n(1000)), ReceiverPublicKey: m.Wallet.PublicKey})
+		copy(tb.PayerPublicKey[0:KeySize], m.Wallet.PublicKey[0:KeySize])
+
+		to := &TransactionOutput{Amount: 1 * davidcoin}
+		copy(to.ReceiverPublicKey[0:KeySize], m.Wallet.PublicKey[0:KeySize])
+		binary.LittleEndian.PutUint32(to.text[0:4], i)
+		to.Sign(m.Wallet.PrivateKey)
+
+		tb.AddOutput(to)
+		tb.SignBlock(m.Wallet.PrivateKey)
 
 		tbg := InitializeTransactionBlockGroup()
 		tbg.Add(tb)
@@ -185,13 +195,7 @@ func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
 	goodRef := make(chan bool)
 
 	go func() {
-		for _, tb := range tbg.TransactionBlockStructs {
-			if !tb.VerifyInputSignatures() {
-				goodSign <- false
-				return
-			}
-		}
-		goodSign <- true
+		goodSign <- tbg.VerifyExceptUTXO()
 	}()
 
 	go func() {

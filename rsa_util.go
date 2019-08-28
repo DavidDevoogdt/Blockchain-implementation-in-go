@@ -9,16 +9,21 @@ import (
 	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 )
 
-// KeySize is used for all user keys
-const KeySize = 256
+// InternalKeySize is the size of the actual key
+const InternalKeySize = 128
+
+// KeySize is the size of the serialized key
+const KeySize = 162
+
+// SignatureSize is number of bytes 1 signature takes
+const SignatureSize = 128
 
 // GenerateKeyPair generates a new key pair
 func GenerateKeyPair() (*rsa.PrivateKey, *rsa.PublicKey) {
-	privkey, err := rsa.GenerateKey(rand.Reader, KeySize*8)
+	privkey, err := rsa.GenerateKey(rand.Reader, InternalKeySize*8)
 	if err != nil {
 		fmt.Println(err)
 
@@ -27,80 +32,26 @@ func GenerateKeyPair() (*rsa.PrivateKey, *rsa.PublicKey) {
 	return privkey, &privkey.PublicKey
 }
 
-// PrivateKeyToBytes private key to bytes
-func PrivateKeyToBytes(priv *rsa.PrivateKey) [KeySize]byte {
-	privBytes := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "",
-			Bytes: x509.MarshalPKCS1PrivateKey(priv),
-		},
-	)
-
-	var output [KeySize]byte
-	copy(output[0:KeySize], privBytes[0:KeySize])
-	return output
-}
-
 // PublicKeyToBytes public key to bytes
 func PublicKeyToBytes(pub *rsa.PublicKey) [KeySize]byte {
+
 	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	pubBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "",
-		Bytes: pubASN1,
-	})
 	var output [KeySize]byte
-	copy(output[0:KeySize], pubBytes[0:KeySize])
+	copy(output[0:KeySize], pubASN1[0:KeySize])
 	return output
-}
-
-// BytesToPrivateKey bytes to private key
-func BytesToPrivateKey(private [KeySize]byte) *rsa.PrivateKey {
-
-	priv := make([]byte, KeySize)
-	copy(priv[0:KeySize], private[0:KeySize])
-
-	block, _ := pem.Decode(priv)
-	enc := x509.IsEncryptedPEMBlock(block)
-	b := block.Bytes
-	var err error
-	if enc {
-		fmt.Println("is encrypted pem block")
-		b, err = x509.DecryptPEMBlock(block, nil)
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-	key, err := x509.ParsePKCS1PrivateKey(b)
-	if err != nil {
-		fmt.Println(err)
-	}
-	return key
 }
 
 // BytesToPublicKey bytes to public key
 func BytesToPublicKey(public [KeySize]byte) *rsa.PublicKey {
-	pub := make([]byte, KeySize)
-	copy(pub[0:KeySize], public[0:KeySize])
-
-	block, _ := pem.Decode(pub)
-	enc := x509.IsEncryptedPEMBlock(block)
-	b := block.Bytes
-	var err error
-	if enc {
-		fmt.Println("is encrypted pem block")
-		b, err = x509.DecryptPEMBlock(block, nil)
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-	ifc, err := x509.ParsePKIXPublicKey(b)
+	ifc, err := x509.ParsePKIXPublicKey(public[:])
 	if err != nil {
 		fmt.Println(err)
 	}
+
 	key, ok := ifc.(*rsa.PublicKey)
 	if !ok {
 		fmt.Println("not ok")
@@ -129,21 +80,21 @@ func DecryptWithPrivateKey(ciphertext []byte, priv *rsa.PrivateKey) []byte {
 }
 
 // SignWithPrivateKey signs hashed byte array
-func SignWithPrivateKey(hashed [32]byte, priv *rsa.PrivateKey) [32]byte {
+func SignWithPrivateKey(hashed [32]byte, priv *rsa.PrivateKey) [SignatureSize]byte {
 	hash := crypto.SHA256
 	ciphertext, err := rsa.SignPSS(rand.Reader, priv, hash, hashed[:], nil)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	fmt.Printf("size of signature is %d\n", len(ciphertext))
-	var a [32]byte
-	copy(a[0:32], ciphertext[0:32])
+	//fmt.Printf("size of signature is %d\n", len(ciphertext))
+	var a [SignatureSize]byte
+	copy(a[0:SignatureSize], ciphertext[0:SignatureSize])
 	return a
 }
 
 // VerifyWithPublicKey verifies SignWithPrivateKey
-func VerifyWithPublicKey(hashed [32]byte, sig [32]byte, pub *rsa.PublicKey) bool {
+func VerifyWithPublicKey(hashed [32]byte, sig [SignatureSize]byte, pub *rsa.PublicKey) bool {
 	hash := crypto.SHA256
 	err := rsa.VerifyPSS(pub, hash, hashed[:], sig[:], nil)
 	return err == nil

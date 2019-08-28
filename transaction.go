@@ -1,22 +1,23 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 )
 
+const outputTextSize = 32
+
 // TransactionRefSize is size of a reference tor a transaction in the blockchain
 const TransactionRefSize = 34
 
 // TransactionInputSize is len of a transaction input
-const TransactionInputSize = 32 + TransactionRefSize
+const TransactionInputSize = SignatureSize + TransactionRefSize
 
 // TransactionOutputSize is len of a transaction output
-const TransactionOutputSize = 8 + 32 + KeySize
-
-// TransactionRequestSize is len of a transaction request
-const TransactionRequestSize = 8 + 32 + KeySize
+const TransactionOutputSize = 8 + SignatureSize + KeySize + 32 + outputTextSize
 
 // TransactionRef dd
 type TransactionRef struct {
@@ -83,7 +84,7 @@ type TransactionBlock struct {
 	OutputNumber   uint8
 	InputList      []*TransactionInput
 	OutputList     []*TransactionOutput
-	Signature      [32]byte
+	Signature      [SignatureSize]byte
 	PayerPublicKey [KeySize]byte
 }
 
@@ -106,17 +107,26 @@ func (tb *TransactionBlock) AddOutput(to *TransactionOutput) {
 // SerializeTransactionBlock serializes transactionblock
 func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 
-	buf := make([]byte, int(tb.InputNumber)*TransactionSize+int(tb.OutputNumber)*TransactionSize+2*1)
+	buf := make([]byte, int(tb.InputNumber)*TransactionInputSize+int(tb.OutputNumber)*TransactionOutputSize+2+SignatureSize+KeySize)
 	buf[0] = tb.InputNumber
 	buf[1] = tb.OutputNumber
+	ind := 2
 	for i := 0; i < int(tb.InputNumber); i++ {
 		a := tb.InputList[i].SerializeTransactionInput()
-		copy(buf[2+i*TransactionSize:2+(i+1)*TransactionSize], a[0:TransactionInputSize])
+		copy(buf[ind+i*TransactionInputSize:ind+(i+1)*TransactionInputSize], a[0:TransactionInputSize])
 	}
+	ind = int(tb.InputNumber)*TransactionInputSize + 2
 	for i := 0; i < int(tb.OutputNumber); i++ {
 		a := tb.OutputList[i].SerializeTransactionOutput()
-		copy(buf[2+int(tb.InputNumber)*TransactionInputSize+i*TransactionOutputSize:2+int(tb.InputNumber)*TransactionInputSize+(i+1)*TransactionOutputSize], a[0:TransactionOutputSize])
+		copy(buf[ind+i*TransactionOutputSize:ind+(i+1)*TransactionOutputSize], a[0:TransactionOutputSize])
 	}
+
+	ind = int(tb.InputNumber)*TransactionInputSize + int(tb.OutputNumber)*TransactionOutputSize + 2
+
+	copy(buf[ind:ind+KeySize], tb.PayerPublicKey[0:KeySize])
+	ind += KeySize
+	copy(buf[ind:ind+SignatureSize], tb.Signature[0:SignatureSize])
+
 	return buf[:]
 }
 
@@ -129,24 +139,82 @@ func DeserializeTransactionBlock(buf []byte, bc *BlockChain) *TransactionBlock {
 	tb.OutputNumber = outputNumber
 	tb.InputList = make([]*TransactionInput, inputNumber)
 	tb.OutputList = make([]*TransactionOutput, outputNumber)
+	ind := 2
 	for i := 0; i < int(tb.InputNumber); i++ {
 		var b [TransactionInputSize]byte
-		copy(b[0:TransactionInputSize], buf[2+i*TransactionInputSize:2+(i+1)*TransactionInputSize])
+		copy(b[0:TransactionInputSize], buf[ind+i*TransactionInputSize:ind+(i+1)*TransactionInputSize])
 		tb.InputList[i] = DeserializeTransactionInput(b, bc)
 	}
+	ind = 2 + int(tb.InputNumber)*TransactionInputSize
+
 	for i := 0; i < int(tb.OutputNumber); i++ {
 		var b [TransactionOutputSize]byte
-		copy(b[0:TransactionOutputSize], buf[2+int(tb.InputNumber)*TransactionInputSize+i*TransactionOutputSize:2+int(tb.InputNumber)*TransactionInputSize+(i+1)*TransactionOutputSize])
+		copy(b[0:TransactionOutputSize], buf[ind+i*TransactionOutputSize:ind+(i+1)*TransactionOutputSize])
 
 		tb.OutputList[i] = DeserializeTransactionOutput(b)
 	}
+	ind = int(tb.InputNumber)*TransactionInputSize + int(tb.OutputNumber)*TransactionOutputSize + 2
+	copy(tb.PayerPublicKey[0:KeySize], buf[ind:ind+KeySize])
+
+	ind += KeySize
+	copy(tb.Signature[0:SignatureSize], buf[ind:ind+SignatureSize])
+
 	return tb
 }
 
-// VerifyInputSignatures is necessary to check whether the coins really belong to the spender
-func (tb *TransactionBlock) VerifyInputSignatures() bool {
-	fmt.Printf("------------------>todo verify input signatures<------------------\n")
-	return true
+// GetPreSignature fetches the hash of the block without the signature
+func (tb *TransactionBlock) GetPreSignature() [32]byte {
+	ser := tb.SerializeTransactionBlock()
+	var temp [32]byte
+	hash := sha256.Sum256(ser[0 : len(ser)-SignatureSize])
+	copy(temp[0:32], hash[0:32])
+	return temp
+}
+
+//SignBlock adds the signature to the block given a private key
+func (tb *TransactionBlock) SignBlock(priv *rsa.PrivateKey) {
+	pre := tb.GetPreSignature()
+	signature := (SignWithPrivateKey(pre, priv))
+	copy(tb.Signature[0:SignatureSize], signature[0:SignatureSize])
+}
+
+// VerifyExceptUTXO is necessary to check whether the coins really belong to the spender, check signatures of block and make sure output is not to large
+func (tb *TransactionBlock) VerifyExceptUTXO(feeBlock bool) bool {
+	//fmt.Printf("------------------>todo verify input signatures<------------------\n")
+
+	if !VerifyWithPublicKey(tb.GetPreSignature(), tb.Signature, BytesToPublicKey(tb.PayerPublicKey)) {
+		fmt.Printf("txblock master signature was not good")
+		return false
+	}
+	for _, inp := range tb.InputList {
+		if !inp.Verify() {
+			fmt.Printf("one of the inputs signatures was not good")
+			return false
+		}
+	}
+
+	inputAmount := uint64(0)
+
+	for _, inp := range tb.InputList {
+		if !bytes.Equal(inp.OutputBlock.ReceiverPublicKey[:], tb.PayerPublicKey[:]) {
+			fmt.Printf("theres a transactioninput which does not belong to the block owner, returning")
+			return false
+		}
+		inputAmount += inp.OutputBlock.Amount
+	}
+
+	outputAmount := uint64(0)
+
+	for _, outp := range tb.OutputList {
+		outputAmount += outp.Amount
+	}
+
+	if feeBlock {
+		return outputAmount <= inputAmount+1*davidcoin
+
+	}
+	return outputAmount <= inputAmount
+
 }
 
 // Hash generates hash of serialized transactionBlock
@@ -160,26 +228,26 @@ func (tb *TransactionBlock) Hash() [32]byte {
 
 // TransactionInput is a input transaction (reference to previous output and proof )
 type TransactionInput struct {
-	VerificationChallenge [32]byte           // signed by receiver
-	OutputBlock           *TransactionOutput //not serialized
-	reference             *TransactionRef    // where this block is stored in chain
+	VerificationChallenge [SignatureSize]byte // signed by receiver
+	OutputBlock           *TransactionOutput  //not serialized
+	reference             *TransactionRef     // where this block is stored in chain
 }
 
 // SerializeTransactionInput puts transaction into byte array
 func (tx *TransactionInput) SerializeTransactionInput() [TransactionInputSize]byte {
 	var d [TransactionInputSize]byte
-	copy(d[0:32], tx.VerificationChallenge[0:32])
+	copy(d[0:SignatureSize], tx.VerificationChallenge[0:SignatureSize])
 	temp := tx.reference.SerializeTransactionRef()
-	copy(d[32:32+TransactionRefSize], temp[0:TransactionRefSize])
+	copy(d[SignatureSize:SignatureSize+TransactionRefSize], temp[0:TransactionRefSize])
 	return d
 }
 
 // DeserializeTransactionInput turns it back into struct. blockchain is used to recover pointer to data
 func DeserializeTransactionInput(d [TransactionInputSize]byte, bc *BlockChain) *TransactionInput {
 	tx := new(TransactionInput)
-	copy(tx.VerificationChallenge[0:32], d[0:32])
+	copy(tx.VerificationChallenge[0:SignatureSize], d[0:SignatureSize])
 	var o [TransactionRefSize]byte
-	copy(o[0:TransactionRefSize], d[32:32+TransactionRefSize])
+	copy(o[0:TransactionRefSize], d[SignatureSize:SignatureSize+TransactionRefSize])
 	tx.reference = DeserializeTransactionRef(o)
 	tx.OutputBlock = bc.GetTransactionOutput(tx.reference)
 	return tx
@@ -201,17 +269,20 @@ func (tx *TransactionInput) Verify() bool {
 // TransactionOutput is a Output or output transaction
 type TransactionOutput struct {
 	Amount            uint64
-	Signature         [32]byte //payer signature
+	Signature         [SignatureSize]byte //payer signature
 	ReceiverPublicKey [KeySize]byte
+	text              [outputTextSize]byte
 }
 
 // SerializeTransactionOutput puts transaction into byte array
 func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize]byte {
 	var d [TransactionOutputSize]byte
 	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
-	//copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
 	copy(d[8:8+KeySize], tx.ReceiverPublicKey[0:KeySize])
-	copy(d[8+KeySize:8+KeySize+32], tx.Signature[0:32])
+	ind := 8 + KeySize
+	copy(d[ind:ind+outputTextSize], tx.text[0:outputTextSize])
+	ind += outputTextSize
+	copy(d[ind:ind+SignatureSize], tx.Signature[0:SignatureSize])
 
 	return d
 }
@@ -220,31 +291,29 @@ func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize
 func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOutput {
 	tx := new(TransactionOutput)
 	tx.Amount = binary.LittleEndian.Uint64(d[0:8])
-	//copy(tx.PayerPublicKey[0:KeySize], d[8:8+KeySize])
 	copy(tx.ReceiverPublicKey[0:KeySize], d[8:8+KeySize])
-	copy(tx.Signature[0:32], d[8+KeySize:8+KeySize+32])
+	ind := 8 + KeySize
+	copy(tx.text[0:outputTextSize], d[ind:ind+outputTextSize])
+	ind += outputTextSize
+	copy(tx.Signature[0:SignatureSize], d[ind:ind+SignatureSize])
 	return tx
 }
 
-// SerializeTransactionRequest puts transaction into byte array
-func (tx *TransactionOutput) SerializeTransactionRequest() [TransactionRequestSize]byte {
-	var d [TransactionRequestSize]byte
-	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
-	//copy(d[8:8+KeySize], tx.PayerPublicKey[0:KeySize])
-	copy(d[8+KeySize:8+KeySize], tx.ReceiverPublicKey[0:KeySize])
-	copy(d[8+KeySize:8+KeySize+32], tx.Signature[0:32])
-	return d
+// PresSignatureHash generates hash of serialized transactionBlock
+func (tx *TransactionOutput) PresSignatureHash() [32]byte {
+	b := tx.SerializeTransactionOutput()
+	return sha256.Sum256(b[0 : TransactionOutputSize-SignatureSize])
 }
 
-// Hash generates hash of serialized transactionBlock
-func (tx *TransactionOutput) Hash() [32]byte {
-	b := tx.SerializeTransactionOutput()
-	return sha256.Sum256(b[0 : TransactionOutputSize-32])
+// Sign is used to proof the payer ordered the spending
+func (tx *TransactionOutput) Sign(priv *rsa.PrivateKey) {
+	signature := SignWithPrivateKey(tx.PresSignatureHash(), priv)
+	copy(tx.Signature[0:SignatureSize], signature[0:SignatureSize])
 }
 
 // Verify verify ownership of payer
 func (tx *TransactionOutput) Verify(PayerPublicKey [KeySize]byte) bool {
-	return VerifyWithPublicKey(tx.Hash(), tx.Signature, BytesToPublicKey(PayerPublicKey))
+	return VerifyWithPublicKey(tx.PresSignatureHash(), tx.Signature, BytesToPublicKey(PayerPublicKey))
 }
 
 //###########################################################
@@ -258,6 +327,22 @@ type TransactionBlockGroup struct {
 	merkleTree              *MerkleTree
 	finalized               bool
 	Height                  uint16
+}
+
+//VerifyExceptUTXO checks for every transaction wheter the transaction is ok. It is not checked her whether or not the transaction is already spent with the utxo manager
+func (tbg *TransactionBlockGroup) VerifyExceptUTXO() bool {
+
+	if !tbg.TransactionBlockStructs[0].VerifyExceptUTXO(true) {
+		return false
+	}
+
+	for _, tb := range tbg.TransactionBlockStructs[1:] {
+		if !tb.VerifyExceptUTXO(false) {
+			return false
+		}
+	}
+	return true
+
 }
 
 // SerializeTransactionBlockGroup makes it ready to send over network
@@ -313,12 +398,12 @@ func DeserializeTransactionBlockGroup(ret []byte, bc *BlockChain) *TransactionBl
 
 //InitializeTransactionBlockGroup is used to construct tbg
 func InitializeTransactionBlockGroup() *TransactionBlockGroup {
+
 	tbg := new(TransactionBlockGroup)
 	tbg.size = 0
 	tbg.lengths = make([]uint16, 0)
 	tbg.TransactionBlocks = make([][]byte, 0)
 	tbg.merkleTree = InitializeMerkleTree()
-
 	return tbg
 }
 
