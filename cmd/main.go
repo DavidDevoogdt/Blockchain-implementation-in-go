@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	bc "project/pkg/blockchain"
 	"sync"
 	"time"
 )
@@ -12,13 +13,14 @@ func main() {
 
 	NumberOfMiners := 6
 
-	broadcaster := NewBroadcaster("receive Channel")
+	broadcaster := bc.NewBroadcaster("Main network")
+
 	fmt.Printf("made broadcaster\n")
-	Miners := make([]*Miner, NumberOfMiners)
+	Miners := make([]*bc.Miner, NumberOfMiners)
 
 	var minersMutex sync.Mutex
 
-	Miners[0] = BlockChainGenesis(3, broadcaster)
+	Miners[0] = bc.BlockChainGenesis(3, broadcaster)
 
 	Miners[0].StartDebug()
 
@@ -26,7 +28,7 @@ func main() {
 
 	for i := 1; i < NumberOfMiners; i++ {
 		fmt.Printf("seting up miner %d\n", i)
-		Miners[i] = CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+		Miners[i] = bc.CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
 	}
 
 	for i := 0; i < NumberOfMiners; i++ {
@@ -38,7 +40,7 @@ func main() {
 	go func() {
 		for {
 			<-InsertMiner
-			m := MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
+			m := bc.MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 
 			minersMutex.Lock()
 			Miners = append(Miners, m)
@@ -78,41 +80,4 @@ func main() {
 		fmt.Printf("##########################################################################")
 
 	}
-
-	/*
-		mt := InitializeMerkleTree()
-
-		for i := 0; i < 256; i++ {
-			token := make([]byte, 4)
-			rand.Read(token)
-			mt.Add(&token)
-		}
-
-		mt.FinalizeTree()
-
-		hash := mt.levelHash[0][0]
-
-		mp := mt.GenerareteMerkleProof(2)
-
-		fmt.Printf("%t\n", mp.VerifyProofStruct(hash))
-	*/
-
-	//testFunc()
-}
-
-func testFunc() {
-	Endfunctions := make([]func(), 0)
-
-	defer func() {
-		for _, f := range Endfunctions {
-			f()
-		}
-	}()
-
-	defer fmt.Printf("later defer\n")
-
-	Endfunctions = append(Endfunctions, func() {
-		fmt.Printf("heey\n")
-
-	})
 }

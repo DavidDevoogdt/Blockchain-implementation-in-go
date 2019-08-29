@@ -1,4 +1,4 @@
-package main
+package davidcoin
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"project/pkg/merkletree"
 )
 
 const outputTextSize = 32
@@ -324,7 +325,7 @@ type TransactionBlockGroup struct {
 	lengths                 []uint16
 	TransactionBlocks       [][]byte
 	TransactionBlockStructs []*TransactionBlock
-	merkleTree              *MerkleTree
+	merkleTree              *merkletree.MerkleTree
 	finalized               bool
 	Height                  uint16
 }
@@ -373,7 +374,7 @@ func DeserializeTransactionBlockGroup(ret []byte, bc *BlockChain) *TransactionBl
 	tbg.Height = binary.LittleEndian.Uint16(ret[1:3])
 
 	tbg.lengths = make([]uint16, tbg.size)
-	tbg.merkleTree = InitializeMerkleTree()
+	tbg.merkleTree = merkletree.InitializeMerkleTree()
 
 	for i := 0; i < int(tbg.size); i++ {
 		tbg.lengths[i] = binary.LittleEndian.Uint16(ret[3+2*i : 5+2*i])
@@ -403,7 +404,7 @@ func InitializeTransactionBlockGroup() *TransactionBlockGroup {
 	tbg.size = 0
 	tbg.lengths = make([]uint16, 0)
 	tbg.TransactionBlocks = make([][]byte, 0)
-	tbg.merkleTree = InitializeMerkleTree()
+	tbg.merkleTree = merkletree.InitializeMerkleTree()
 	return tbg
 }
 

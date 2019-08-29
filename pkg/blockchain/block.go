@@ -1,5 +1,4 @@
-package main
-
+package davidcoin
 import (
 	"bytes"
 	"crypto/sha256"
