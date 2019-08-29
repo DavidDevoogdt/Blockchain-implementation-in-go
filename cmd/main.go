@@ -66,18 +66,20 @@ func main() {
 
 	for {
 		<-End
+		go func() {
+			fmt.Printf("##########################################################################")
 
-		fmt.Printf("##########################################################################")
+			minersMutex.Lock()
+			Miners[0].Print()
+			for i := 1; i < NumberOfMiners; i++ {
+				Miners[i].PrintHash(3)
+				//Miners[i].PrintHash(3)
+			}
+			minersMutex.Unlock()
 
-		minersMutex.Lock()
-		Miners[0].Print()
-		for i := 1; i < NumberOfMiners; i++ {
-			Miners[i].PrintHash(3)
-			//Miners[i].PrintHash(3)
-		}
-		minersMutex.Unlock()
+			fmt.Printf("##########################################################################")
 
-		fmt.Printf("##########################################################################")
+		}()
 
 	}
 }

@@ -666,10 +666,36 @@ func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
 	return nil
 }
 
-// GetTransactionOutput turns reference into locally saved version
-func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) *TransactionOutput {
-	// todo verifiy this data is present
-	return bc.AllNodesMap[tr.BlockHash].DataPointer.TransactionBlockStructs[tr.TransactionBlockNumber].OutputList[tr.OutputNumber]
+// GetTransactionOutput turns reference into locally saved version err: 0->ok 1->block unknown 2->no data 3->data does not exist
+func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) (*TransactionOutput, uint8) {
+
+	bc.AllNodesMapMutex.Lock()
+	bl, ok := bc.AllNodesMap[tr.BlockHash]
+	bc.AllNodesMapMutex.Unlock()
+
+	if !ok {
+		return nil, uint8(1)
+	}
+
+	bl.generalMutex.RLock()
+	if bl.HasData == false {
+		bl.generalMutex.RUnlock()
+		return nil, uint8(2)
+	}
+	dp := bl.DataPointer
+	bl.generalMutex.RUnlock()
+
+	if dp.size <= tr.TransactionBlockNumber {
+		return nil, uint8(4)
+	}
+
+	outpBl := dp.TransactionBlockStructs[tr.TransactionBlockNumber]
+
+	if outpBl.OutputNumber <= tr.OutputNumber {
+		return nil, uint8(4)
+	}
+
+	return outpBl.OutputList[tr.OutputNumber], uint8(0)
 }
 
 // VerifyHash checks to blockchain from head to root

@@ -81,12 +81,20 @@ func DeserializeTransactionBlockNode(ret []byte, bc *BlockChain) *TransactionBlo
 
 // TransactionBlock groups transactions
 type TransactionBlock struct {
-	InputNumber    uint8
-	OutputNumber   uint8
-	InputList      []*TransactionInput
-	OutputList     []*TransactionOutput
-	Signature      [SignatureSize]byte
-	PayerPublicKey [KeySize]byte
+	InputNumber                  uint8
+	OutputNumber                 uint8
+	InputList                    []*TransactionInput
+	OutputList                   []*TransactionOutput
+	Signature                    [SignatureSize]byte
+	PayerPublicKey               [KeySize]byte
+	UnsolvedReferences           []*unResolvedReferences
+	NumberOfUnresolvedReferences uint8
+}
+
+type unResolvedReferences struct {
+	tr       *TransactionRef
+	inputnum uint8
+	reason   uint8
 }
 
 // InitializeTransactionBlock setups basic stuff in transactionblock
@@ -134,6 +142,7 @@ func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 // DeserializeTransactionBlock does the inverse of serialize. The Blockchain is used to recover pointer to dataoutput instead of reference struct
 func DeserializeTransactionBlock(buf []byte, bc *BlockChain) *TransactionBlock {
 	tb := new(TransactionBlock)
+	tb.UnsolvedReferences = make([]*unResolvedReferences, 0)
 	inputNumber := uint8(buf[0])
 	outputNumber := uint8(buf[1])
 	tb.InputNumber = inputNumber
@@ -144,7 +153,12 @@ func DeserializeTransactionBlock(buf []byte, bc *BlockChain) *TransactionBlock {
 	for i := 0; i < int(tb.InputNumber); i++ {
 		var b [TransactionInputSize]byte
 		copy(b[0:TransactionInputSize], buf[ind+i*TransactionInputSize:ind+(i+1)*TransactionInputSize])
-		tb.InputList[i] = DeserializeTransactionInput(b, bc)
+		inp, ok := DeserializeTransactionInput(b, bc)
+		tb.InputList[i] = inp
+		if ok != uint8(0) {
+			tb.NumberOfUnresolvedReferences++
+			tb.UnsolvedReferences = append(tb.UnsolvedReferences, &unResolvedReferences{tr: inp.reference, inputnum: uint8(i), reason: ok})
+		}
 	}
 	ind = 2 + int(tb.InputNumber)*TransactionInputSize
 
@@ -244,14 +258,17 @@ func (tx *TransactionInput) SerializeTransactionInput() [TransactionInputSize]by
 }
 
 // DeserializeTransactionInput turns it back into struct. blockchain is used to recover pointer to data
-func DeserializeTransactionInput(d [TransactionInputSize]byte, bc *BlockChain) *TransactionInput {
+func DeserializeTransactionInput(d [TransactionInputSize]byte, bc *BlockChain) (*TransactionInput, uint8) {
 	tx := new(TransactionInput)
 	copy(tx.VerificationChallenge[0:SignatureSize], d[0:SignatureSize])
 	var o [TransactionRefSize]byte
 	copy(o[0:TransactionRefSize], d[SignatureSize:SignatureSize+TransactionRefSize])
 	tx.reference = DeserializeTransactionRef(o)
-	tx.OutputBlock = bc.GetTransactionOutput(tx.reference)
-	return tx
+	ret, ok := bc.GetTransactionOutput(tx.reference)
+	if ret != nil {
+		tx.OutputBlock = ret
+	}
+	return tx, ok
 }
 
 // Hash generates hash of serialized transactionBlock

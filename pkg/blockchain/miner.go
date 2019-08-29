@@ -2,9 +2,7 @@ package davidcoin
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -36,6 +34,8 @@ type Miner struct {
 
 	SynchronousReceiveChannels      map[[32]byte]chan []byte
 	SynchronousReceiveChannelsMutex sync.Mutex
+
+	tp *TransactionPool
 }
 
 //###################one time init###################
@@ -57,7 +57,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	m.ReceivedData = make(map[[32]byte]bool)
 	m.BlockChain.Root.UTxOManagerPointer = InitializeUTxOMananger(m)
 	m.BlockChain.Root.UTxOManagerIsUpToDate = true
-	//InitializeUTxOMananger(m)
+	m.tp = m.InitializeTransactionPool()
 
 	go m.ReceiveNetwork()
 
@@ -71,7 +71,7 @@ func MinerFromScratch(name string, broadcaster *Broadcaster) *Miner {
 	return m
 }
 
-// CreateGenesisMiner used for first miners
+// CreateGenesisMiner called from other place, difficult circular dependencies for first miner
 func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *BlockChain) *Miner {
 
 	m := new(Miner)
@@ -85,7 +85,7 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	m.interrupt = make(chan bool)
 	m.Debug = false
 	m.ReceivedData = make(map[[32]byte]bool)
-
+	m.tp = m.InitializeTransactionPool()
 	//InitializeUTxOMananger(m)
 
 	go m.ReceiveNetwork()
@@ -129,27 +129,9 @@ func (m *Miner) MineBlock(newBlock *Block) *Block {
 
 // MineContiniously does what it says
 func (m *Miner) MineContiniously() {
-	i := uint32(0)
 	for {
-		tb := InitializeTransactionBlock()
-		copy(tb.PayerPublicKey[0:KeySize], m.Wallet.PublicKey[0:KeySize])
-
-		to := &TransactionOutput{Amount: 1 * davidcoin}
-		copy(to.ReceiverPublicKey[0:KeySize], m.Wallet.PublicKey[0:KeySize])
-		binary.LittleEndian.PutUint32(to.text[0:4], i)
-		to.Sign(m.Wallet.PrivateKey)
-
-		tb.AddOutput(to)
-		tb.SignBlock(m.Wallet.PrivateKey)
-
-		tbg := InitializeTransactionBlockGroup()
-		tbg.Add(tb)
-		tbg.FinalizeTransactionBlockGroup()
-
-		tbg.SerializeTransactionBlockGroup()
-
-		prepBlock := m.PrepareBlockForMining(tbg)
-
+		tbg := m.tp.GenerateTransctionBlockGroup()
+		prepBlock := m.tp.PrepareBlockForMining(tbg)
 		if prepBlock != nil {
 			blc := m.MineBlock(prepBlock)
 			//print(blc)
@@ -166,66 +148,6 @@ func (m *Miner) MineContiniously() {
 			m.DebugPrint("Block nil, somthing went wrong with preparation of it\n")
 		}
 	}
-}
-
-// PrepareBlockForMining takes transactiondata and builds a block suitable for mining
-func (m *Miner) PrepareBlockForMining(tbg *TransactionBlockGroup) *Block {
-
-	m.DebugPrint(" started preparing tbg for mining\n")
-
-	m.GeneralMutex.Lock()
-	bc := m.BlockChain
-	m.GeneralMutex.Unlock()
-
-	bc.BlockChainMutex.Lock()
-	head := bc.Head
-	bc.BlockChainMutex.Unlock()
-
-	head.generalMutex.RLock()
-	headUTxOManagerIsUpToDate := head.UTxOManagerIsUpToDate
-	headUTxOManagerPointer := head.UTxOManagerPointer
-	prevBlock := head.Block
-	head.generalMutex.RUnlock()
-
-	if !headUTxOManagerIsUpToDate {
-		m.DebugPrint(fmt.Sprintf("head is not up to date, invoking and returning\n"))
-	}
-
-	goodSign := make(chan bool)
-	goodRef := make(chan bool)
-
-	go func() {
-		goodSign <- tbg.VerifyExceptUTXO()
-	}()
-
-	go func() {
-		goodRef <- headUTxOManagerPointer.VerifyTransactionBlockRefs(tbg)
-	}()
-
-	//m.DebugPrint(fmt.Sprintf("newHash is %x", newHash))
-	//m.DebugPrint(fmt.Sprintf("%s started mining %x\n", m.Name, newHash))
-
-	newBlock := new(Block)
-	newBlock.BlockCount = prevBlock.BlockCount + 1
-	newBlock.PrevHash = prevBlock.Hash()
-	newBlock.Nonce = rand.Uint32()
-	newBlock.MerkleRoot = tbg.merkleTree.GetMerkleRoot()
-	newBlock.Difficulty = prevBlock.Difficulty
-
-	if !(<-goodRef) {
-		m.DebugPrint("The prepared transactionblockgroup for mining had bad refs, ignoring\n")
-		return nil
-	}
-
-	if !(<-goodSign) {
-		m.DebugPrint("The prepared transactionblockgroup bad signatures, ignoring\n")
-		return nil
-	}
-
-	//m.DebugPrint("finished praparation of block\n")
-
-	return newBlock
-
 }
 
 //###############representation#####################
@@ -436,7 +358,8 @@ func (m *Miner) ReceiveSend(msg []byte) {
 		m.BlockChain.addBlockChainNode(bl)
 		go m.BlockChain.AddData(ss.data[:])
 	case SendType["Transaction"]:
-		fmt.Print("todo implement reception of transaction proof")
+		m.tp.RecieveChannel <- ss.data[:]
+		m.DebugPrint("Received transaction data")
 	case SendType["Blockchain"]:
 		fmt.Printf("receiving of blockchain send not yet implemented")
 	}
