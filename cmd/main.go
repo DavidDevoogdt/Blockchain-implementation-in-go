@@ -3,83 +3,171 @@ package main
 import (
 	"fmt"
 	bc "project/pkg/blockchain"
-	"sync"
 	"time"
+
+	"github.com/sasha-s/go-deadlock"
+	"gopkg.in/abiosoft/ishell.v2"
 )
 
-// NumberOfMiners is local number of threads competing
-
 func main() {
+	fmt.Print("press enter: ")
+	var input string
+	fmt.Scanln(&input)
+	if input != "debug" {
 
-	NumberOfMiners := 6
+		NumberOfMiners := 1
+		broadcaster := bc.NewBroadcaster("Main network")
+		Miners := make([]*bc.Miner, 1)
+		Miners[0] = bc.BlockChainGenesis("Genesis", 3, broadcaster)
+		MinerNames := make([]string, 1)
+		MinerNames[0] = "Genesis"
 
-	broadcaster := bc.NewBroadcaster("Main network")
+		// ##################
+		shell := ishell.New()
 
-	fmt.Printf("made broadcaster\n")
-	Miners := make([]*bc.Miner, NumberOfMiners)
+		shell.Println("Welcome to davidcoin shell. start by typing help")
 
-	var minersMutex sync.Mutex
+		shell.AddCmd(&ishell.Cmd{
+			Name: "AddMiner",
+			Help: "AddMiner -n name -d true",
+			Func: func(c *ishell.Context) {
+				c.ShowPrompt(false)
+				defer c.ShowPrompt(true) // yes, revert after login.
 
-	Miners[0] = bc.BlockChainGenesis(3, broadcaster)
+				// get username
+				c.Print("Name miner: ")
+				name := c.ReadLine()
 
-	Miners[0].StartDebug()
+				m := bc.CreateMiner(name, broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+				NumberOfMiners++
+				Miners = append(Miners, m)
+				MinerNames = append(MinerNames, name)
 
-	fmt.Printf("made genesis miner\n")
+				choice := c.MultiChoice([]string{
+					"Miner",
+					"Observer",
+				}, "Role of miner")
+				if choice == 0 {
+					go m.MineContiniously()
+				}
 
-	for i := 1; i < NumberOfMiners; i++ {
-		fmt.Printf("seting up miner %d\n", i)
-		Miners[i] = bc.CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
-	}
+				choice2 := c.MultiChoice([]string{
+					"No",
+					"Yes",
+				}, "Print every debug message on this shell")
+				if choice2 == 1 {
+					m.StartDebug()
+				}
+				c.Println("Created Miner.")
+			},
+		})
 
-	for i := 0; i < NumberOfMiners; i++ {
-		go Miners[i].MineContiniously()
-	}
+		shell.AddCmd(&ishell.Cmd{
+			Name: "PrintMiner",
+			Help: "PrintMiner",
+			Func: func(c *ishell.Context) {
+				c.ShowPrompt(false)
+				defer c.ShowPrompt(true) // yes, revert after login.
 
-	InsertMiner := time.Tick(1000 * time.Millisecond)
+				choice := c.MultiChoice(MinerNames, "Chose miner")
 
-	go func() {
-		for {
-			<-InsertMiner
-			m := bc.MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
+				Miners[choice].Print()
+			},
+		})
 
-			minersMutex.Lock()
-			Miners = append(Miners, m)
-			NumberOfMiners++
-			n := NumberOfMiners
-			minersMutex.Unlock()
+		shell.AddCmd(&ishell.Cmd{
+			Name: "PrintEveryone",
+			Help: "Print every miner Miner",
+			Func: func(c *ishell.Context) {
+				c.ShowPrompt(false)
+				defer c.ShowPrompt(true) // yes, revert after login.
 
-			//m.StartDebug()
+				fmt.Printf("##########################################################################")
 
-			if n%2 == 0 {
-				go m.MineContiniously()
-			}
+				Miners[0].Print()
+				for i := 1; i < NumberOfMiners; i++ {
+					Miners[i].PrintHash(3)
+				}
 
-			if n == 20 {
-				return
-			}
+				fmt.Printf("##########################################################################")
 
+			},
+		})
+
+		shell.Run()
+
+	} else {
+
+		NumberOfMiners := 6
+
+		broadcaster := bc.NewBroadcaster("Main network")
+		Miners := make([]*bc.Miner, NumberOfMiners)
+
+		fmt.Printf("made broadcaster\n")
+
+		var minersMutex deadlock.Mutex
+
+		Miners[0] = bc.BlockChainGenesis("Genesis", 3, broadcaster)
+
+		Miners[0].StartDebug()
+
+		fmt.Printf("made genesis miner\n")
+
+		for i := 1; i < NumberOfMiners; i++ {
+			fmt.Printf("seting up miner %d\n", i)
+			Miners[i] = bc.CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
 		}
 
-	}()
+		for i := 0; i < NumberOfMiners; i++ {
+			go Miners[i].MineContiniously()
+		}
 
-	End := time.Tick(10000 * time.Millisecond)
+		InsertMiner := time.Tick(1000 * time.Millisecond)
 
-	for {
-		<-End
 		go func() {
-			fmt.Printf("##########################################################################")
+			for {
+				<-InsertMiner
+				m := bc.MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
 
-			minersMutex.Lock()
-			Miners[0].Print()
-			for i := 1; i < NumberOfMiners; i++ {
-				Miners[i].PrintHash(3)
-				//Miners[i].PrintHash(3)
+				minersMutex.Lock()
+				Miners = append(Miners, m)
+				NumberOfMiners++
+				n := NumberOfMiners
+				minersMutex.Unlock()
+
+				//m.StartDebug()
+
+				if n%2 == 0 {
+					go m.MineContiniously()
+				}
+
+				if n == 20 {
+					return
+				}
+
 			}
-			minersMutex.Unlock()
-
-			fmt.Printf("##########################################################################")
 
 		}()
 
+		End := time.Tick(10000 * time.Millisecond)
+
+		for {
+			<-End
+			go func() {
+				fmt.Printf("##########################################################################")
+
+				minersMutex.Lock()
+				Miners[0].Print()
+				for i := 1; i < NumberOfMiners; i++ {
+					Miners[i].PrintHash(3)
+					//Miners[i].PrintHash(3)
+				}
+				minersMutex.Unlock()
+
+				fmt.Printf("##########################################################################")
+
+			}()
+
+		}
 	}
 }

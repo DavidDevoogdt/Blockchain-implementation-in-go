@@ -24,6 +24,24 @@ type TransactionPool struct {
 	RecieveChannel chan []byte
 }
 
+//UpdateWithBlockchainNode checks whether some transactionrequest refer to this block
+func (tp *TransactionPool) UpdateWithBlockchainNode(bcn *BlockChainNode) {
+	bcn.generalMutex.Lock()
+	bcn.knownToTransactionPool = true
+	_prevBCN := bcn.PrevBlockChainNode
+	bcn.generalMutex.Unlock()
+
+	_prevBCN.generalMutex.RLock()
+	ok := _prevBCN.knownToTransactionPool
+	_prevBCN.generalMutex.RUnlock()
+
+	if !ok {
+		tp.UpdateWithBlockchainNode(_prevBCN)
+	}
+
+	//todo verify if any incomingrequest can be solved with the new block
+}
+
 //InitializeTransactionPool needs to be called once for initialization of the data structure
 func (m *Miner) InitializeTransactionPool() *TransactionPool {
 	tp := new(TransactionPool)
@@ -38,24 +56,25 @@ func (m *Miner) InitializeTransactionPool() *TransactionPool {
 
 // ReceiveTransactionBlock verifies and adds a tx to the pool of blocks for the next transactionblockgroup
 func (tp *TransactionPool) ReceiveTransactionBlock() {
-	tbArr := <-tp.RecieveChannel
-	//todo at the time only complete good blocks according to current blockchain status get into the signatureverifiedpool
-	go func() {
-		tb := DeserializeTransactionBlock(tbArr, tp.miner.BlockChain)
-		if tb.NumberOfUnresolvedReferences != uint8(0) {
-			fmt.Printf("todo complete references or reject block")
-		}
-		good := tb.VerifyExceptUTXO(false)
-		if good {
-			tp.SignatureVerifiedMutex.Lock()
-			tp.numberSignatureVerified++
-			tp.SignatureVerifiedRequest[tb.Hash()] = tb
-			tp.SignatureVerifiedMutex.Unlock()
-		} else {
-			fmt.Printf("todo receive incomplete block")
-		}
-	}()
-
+	for {
+		tbArr := <-tp.RecieveChannel
+		//todo at the time only complete good blocks according to current blockchain status get into the signatureverifiedpool
+		go func() {
+			tb := DeserializeTransactionBlock(tbArr, tp.miner.BlockChain)
+			if tb.NumberOfUnresolvedReferences != uint8(0) {
+				fmt.Printf("todo complete references or reject block")
+			}
+			good := tb.VerifyExceptUTXO(false)
+			if good {
+				tp.SignatureVerifiedMutex.Lock()
+				tp.numberSignatureVerified++
+				tp.SignatureVerifiedRequest[tb.Hash()] = tb
+				tp.SignatureVerifiedMutex.Unlock()
+			} else {
+				fmt.Printf("todo receive incomplete block")
+			}
+		}()
+	}
 }
 
 // GenerateTransctionBlockGroup makes a fee block and adds the blocks in the pool to a full transactionblockgroup
@@ -146,8 +165,6 @@ func (tp *TransactionPool) PrepareBlockForMining(tbg *TransactionBlockGroup) *Bl
 		m.DebugPrint("The prepared transactionblockgroup bad signatures, ignoring\n")
 		return nil
 	}
-
-	//m.DebugPrint("finished praparation of block\n")
 
 	return newBlock
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"sync"
+
+	"github.com/sasha-s/go-deadlock"
 )
 
 // BlockChain keeps the general infromation of all the incoming blocks.
@@ -11,7 +13,7 @@ import (
 // addBlockChainNode adds a block based on its hash and does internal bookkeeping of the tree. If the block does not fit in the tree, a seperate orphanblockchain is created
 // The previous blocks are requested if needed. verifyAndBuildDown updates the the unspent transaction output mananger. Here it is checked whether the block and its data is vallid
 type BlockChain struct {
-	BlockChainMutex   sync.RWMutex
+	BlockChainMutex   deadlock.RWMutex
 	Head              *BlockChainNode
 	Root              *BlockChainNode
 	OrphanBlockChains []*BlockChain
@@ -36,7 +38,7 @@ type BlockChain struct {
 
 // BlockChainNode links block to previous parent
 type BlockChainNode struct {
-	generalMutex       sync.RWMutex
+	generalMutex       deadlock.RWMutex
 	PrevBlockChainNode *BlockChainNode
 	NextBlockChainNode *BlockChainNode
 	Block              *Block
@@ -52,7 +54,7 @@ type BlockChainNode struct {
 
 	dataHasArrived chan bool
 
-	//writeRequest chan WriteRequest
+	knownToTransactionPool bool
 }
 
 //#########core
@@ -513,6 +515,7 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 		log.Fatal("updating utxoManager Failed, should not happen!\n")
 		return
 	}
+	go bc.Miner.Wallet.UpdateWithBlock(bcn)
 	bcMiner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
 
 }
@@ -561,8 +564,6 @@ func DeserializeBlockChain(bc [][BlockSize]byte) *BlockChain {
 	bcn.UTxOManagerPointer = nil
 
 	bcn.HasData = false
-
-	go blockChain.utxoUpdater()
 
 	//first block
 

@@ -1,7 +1,7 @@
 package davidcoin
 
 // BlockChainGenesis creates first miner, mines first block and initiates the blockchain
-func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
+func BlockChainGenesis(name string, difficulty uint32, broadcaster *Broadcaster) *Miner {
 
 	bl := new(BlockChainNode)
 	bl.PrevBlockChainNode = bl
@@ -16,7 +16,7 @@ func BlockChainGenesis(difficulty uint32, broadcaster *Broadcaster) *Miner {
 
 	bc.utxoChan = make(chan *BlockChainNode)
 
-	genesisMiner := CreateGenesisMiner("genesis", broadcaster, bc)
+	genesisMiner := CreateGenesisMiner(name, broadcaster, bc)
 	bc.Miner = genesisMiner
 	gen := generateGenesis(difficulty, genesisMiner)
 	bl.Block = gen

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/sasha-s/go-deadlock"
 )
 
 // Everyone is shorthand for all subscribed receivers
@@ -24,7 +26,7 @@ type Miner struct {
 	Debug    bool
 	isMining bool
 
-	GeneralMutex sync.Mutex
+	GeneralMutex deadlock.Mutex
 
 	ReceivedData      map[[32]byte]bool
 	ReceivedDataMutex sync.Mutex
@@ -45,7 +47,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 
 	m := new(Miner)
 	m.Name = name
-	m.Wallet = InitializeWallet()
+	m.Wallet = m.InitializeWallet()
 	m.BlockChain = DeserializeBlockChain(blockChain)
 	m.Broadcaster = Broadcaster
 	m.NetworkChannel = make(chan []byte)
@@ -60,6 +62,7 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][BlockSize]
 	m.tp = m.InitializeTransactionPool()
 
 	go m.ReceiveNetwork()
+	go m.BlockChain.utxoUpdater()
 
 	return m
 }
@@ -76,7 +79,7 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 
 	m := new(Miner)
 	m.Name = name
-	m.Wallet = InitializeWallet()
+	m.Wallet = m.InitializeWallet()
 	m.BlockChain = blockChain
 	m.Broadcaster = Broadcaster
 	m.NetworkChannel = make(chan []byte)
@@ -89,6 +92,7 @@ func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *Block
 	//InitializeUTxOMananger(m)
 
 	go m.ReceiveNetwork()
+	go m.BlockChain.utxoUpdater()
 	return m
 }
 
