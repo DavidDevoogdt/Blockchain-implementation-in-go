@@ -47,8 +47,8 @@ func (ps *ProofStruct) VerifyProofStruct(expected [32]byte) bool {
 	temp := sha256.Sum256(ps.data[:])
 
 	var buf [64]byte
-	for i := uint8(0); i < ps.proofSize; i++ {
-		if (ps.applicationOrder>>i)&1 == 1 {
+	for i := 0; i < int(ps.proofSize); i++ {
+		if (ps.applicationOrder>>uint8(i))&1 == 1 {
 			copy(buf[0:32], ps.proofArray[i*32:(i+1)*32])
 			copy(buf[32:64], temp[0:32])
 		} else {
@@ -164,6 +164,17 @@ func (mt *MerkleTree) GenerareteMerkleProof(elementNum uint8) *ProofStruct {
 		fmt.Printf("merkle tree not finalized yet, returning")
 		return nil
 	}
+
+	//fmt.Printf("elem: %d", mt.elements)
+
+	if mt.elements == uint8(1) {
+		l := len(*mt.data[0])
+		ps := &ProofStruct{proofSize: 0}
+		ps.data = make([]byte, l)
+		copy(ps.data[0:l], (*mt.data[0])[0:l])
+		return ps
+	}
+
 	if elementNum >= mt.elements {
 		fmt.Printf("Elementnum larger than the number of stored elemenets, quiting")
 		return nil
@@ -182,6 +193,7 @@ func (mt *MerkleTree) GenerareteMerkleProof(elementNum uint8) *ProofStruct {
 
 	ps.proofArray = make([]byte, 32*int(ps.proofSize))
 	k := ps.applicationOrder
+	fmt.Printf("%.8b", k)
 
 	for i := 0; i <= int(ps.proofSize-1); i++ {
 		layerIndex := int(ps.proofSize) - i
