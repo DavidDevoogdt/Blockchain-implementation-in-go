@@ -363,7 +363,7 @@ func (m *Miner) ReceiveSend(msg []byte) {
 		go m.BlockChain.AddData(ss.data[:])
 	case SendType["Transaction"]:
 		m.tp.RecieveChannel <- ss.data[:]
-		m.DebugPrint("Received transaction data")
+		//m.DebugPrint("Received transaction data\n")
 	case SendType["Blockchain"]:
 		fmt.Printf("receiving of blockchain send not yet implemented")
 	}

@@ -357,7 +357,7 @@ func (bc *BlockChain) AddData(data []byte) {
 	val.generalMutex.Lock()
 
 	if val.HasData {
-		bc.Miner.DebugPrint("received data already added to structure, send confirmation not good")
+		bc.Miner.DebugPrint("received data already added to structure, send confirmation not good\n")
 		val.generalMutex.Unlock()
 		return
 	}
@@ -463,7 +463,7 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 	prevUTXO := _prevBCN.UTxOManagerPointer
 	_prevBCN.generalMutex.RUnlock()
 
-	goodTransactions := prevUTXO.VerifyTransactionBlockRefs(bcnTbs)
+	goodTransactions := prevUTXO.VerifyTransactionBlockGroupRefs(bcnTbs)
 	goodSignatures := bcnTbs.VerifyExceptUTXO()
 
 	bcn.generalMutex.Lock()
@@ -505,18 +505,20 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 		}
 		bcMiner.GeneralMutex.Unlock()
 
-		bcMiner.DebugPrint("Updated the head after verification")
+		bcMiner.DebugPrint("Updated the head after verification\n")
 	}
 
 	keepCopy := _newHeight%5 == 1
 
 	succes := prevUTXO.UpdateWithNextBlockChainNode(bcn, keepCopy)
 	if !succes {
-		log.Fatal("updating utxoManager Failed, should not happen!\n")
+		log.Fatal(fmt.Sprintf("updating utxoManager Failed, should not happen! %s\n", bc.Miner.Name))
 		return
 	}
-	go bc.Miner.Wallet.UpdateWithBlock(bcn)
+
 	bcMiner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
+	bc.Miner.Wallet.UpdateWithBlock(bcn)
+	bc.Miner.tp.UpdateWithBlockchainNode(bcn)
 
 }
 

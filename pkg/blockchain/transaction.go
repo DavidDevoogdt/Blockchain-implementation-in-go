@@ -113,6 +113,12 @@ func (tb *TransactionBlock) AddOutput(to *TransactionOutput) {
 	tb.OutputNumber++
 }
 
+// AddInput ads outp to list
+func (tb *TransactionBlock) AddInput(ti *TransactionInput) {
+	tb.InputList = append(tb.InputList, ti)
+	tb.InputNumber++
+}
+
 // SerializeTransactionBlock serializes transactionblock
 func (tb *TransactionBlock) SerializeTransactionBlock() []byte {
 
@@ -249,37 +255,51 @@ type TransactionInput struct {
 }
 
 // SerializeTransactionInput puts transaction into byte array
-func (tx *TransactionInput) SerializeTransactionInput() [TransactionInputSize]byte {
+func (ti *TransactionInput) SerializeTransactionInput() [TransactionInputSize]byte {
 	var d [TransactionInputSize]byte
-	copy(d[0:SignatureSize], tx.VerificationChallenge[0:SignatureSize])
-	temp := tx.reference.SerializeTransactionRef()
+	copy(d[0:SignatureSize], ti.VerificationChallenge[0:SignatureSize])
+	temp := ti.reference.SerializeTransactionRef()
 	copy(d[SignatureSize:SignatureSize+TransactionRefSize], temp[0:TransactionRefSize])
 	return d
 }
 
 // DeserializeTransactionInput turns it back into struct. blockchain is used to recover pointer to data
 func DeserializeTransactionInput(d [TransactionInputSize]byte, bc *BlockChain) (*TransactionInput, uint8) {
-	tx := new(TransactionInput)
-	copy(tx.VerificationChallenge[0:SignatureSize], d[0:SignatureSize])
+	ti := new(TransactionInput)
+	copy(ti.VerificationChallenge[0:SignatureSize], d[0:SignatureSize])
 	var o [TransactionRefSize]byte
 	copy(o[0:TransactionRefSize], d[SignatureSize:SignatureSize+TransactionRefSize])
-	tx.reference = DeserializeTransactionRef(o)
-	ret, ok := bc.GetTransactionOutput(tx.reference)
+	ti.reference = DeserializeTransactionRef(o)
+	ret, ok := bc.GetTransactionOutput(ti.reference)
 	if ret != nil {
-		tx.OutputBlock = ret
+		ti.OutputBlock = ret
 	}
-	return tx, ok
-}
-
-// Hash generates hash of serialized transactionBlock
-func (tx *TransactionInput) Hash() [32]byte {
-	b := tx.SerializeTransactionInput()
-	return sha256.Sum256(b[0 : TransactionInputSize-32])
+	return ti, ok
 }
 
 // Verify verify ownership of payer
-func (tx *TransactionInput) Verify() bool {
-	return VerifyWithPublicKey(tx.Hash(), tx.VerificationChallenge, BytesToPublicKey(tx.OutputBlock.ReceiverPublicKey))
+func (ti *TransactionInput) Verify() bool {
+	if ti.OutputBlock == nil {
+		fmt.Printf("todo: cannot be verified because outputblock reference is not decoded")
+	}
+	ser := ti.OutputBlock.SerializeTransactionOutput()
+	prevHash := sha256.Sum256(ser[:])
+
+	var cont [32]byte
+	copy(cont[0:32], prevHash[0:32])
+
+	return VerifyWithPublicKey(cont, ti.VerificationChallenge, BytesToPublicKey(ti.OutputBlock.ReceiverPublicKey))
+}
+
+// Sign signs the block
+func (ti *TransactionInput) Sign(priv *rsa.PrivateKey) {
+	ser := ti.OutputBlock.SerializeTransactionOutput()
+	prevHash := sha256.Sum256(ser[:])
+	var cont [32]byte
+	copy(cont[0:32], prevHash[0:32])
+
+	signa := SignWithPrivateKey(cont, priv)
+	copy(ti.VerificationChallenge[0:SignatureSize], signa[0:SignatureSize])
 }
 
 //##############################################
@@ -293,45 +313,45 @@ type TransactionOutput struct {
 }
 
 // SerializeTransactionOutput puts transaction into byte array
-func (tx *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize]byte {
+func (to *TransactionOutput) SerializeTransactionOutput() [TransactionOutputSize]byte {
 	var d [TransactionOutputSize]byte
-	binary.LittleEndian.PutUint64(d[0:8], tx.Amount)
-	copy(d[8:8+KeySize], tx.ReceiverPublicKey[0:KeySize])
+	binary.LittleEndian.PutUint64(d[0:8], to.Amount)
+	copy(d[8:8+KeySize], to.ReceiverPublicKey[0:KeySize])
 	ind := 8 + KeySize
-	copy(d[ind:ind+outputTextSize], tx.text[0:outputTextSize])
+	copy(d[ind:ind+outputTextSize], to.text[0:outputTextSize])
 	ind += outputTextSize
-	copy(d[ind:ind+SignatureSize], tx.Signature[0:SignatureSize])
+	copy(d[ind:ind+SignatureSize], to.Signature[0:SignatureSize])
 
 	return d
 }
 
 // DeserializeTransactionOutput turns it back into struct
 func DeserializeTransactionOutput(d [TransactionOutputSize]byte) *TransactionOutput {
-	tx := new(TransactionOutput)
-	tx.Amount = binary.LittleEndian.Uint64(d[0:8])
-	copy(tx.ReceiverPublicKey[0:KeySize], d[8:8+KeySize])
+	to := new(TransactionOutput)
+	to.Amount = binary.LittleEndian.Uint64(d[0:8])
+	copy(to.ReceiverPublicKey[0:KeySize], d[8:8+KeySize])
 	ind := 8 + KeySize
-	copy(tx.text[0:outputTextSize], d[ind:ind+outputTextSize])
+	copy(to.text[0:outputTextSize], d[ind:ind+outputTextSize])
 	ind += outputTextSize
-	copy(tx.Signature[0:SignatureSize], d[ind:ind+SignatureSize])
-	return tx
+	copy(to.Signature[0:SignatureSize], d[ind:ind+SignatureSize])
+	return to
 }
 
 // PresSignatureHash generates hash of serialized transactionBlock
-func (tx *TransactionOutput) PresSignatureHash() [32]byte {
-	b := tx.SerializeTransactionOutput()
+func (to *TransactionOutput) PresSignatureHash() [32]byte {
+	b := to.SerializeTransactionOutput()
 	return sha256.Sum256(b[0 : TransactionOutputSize-SignatureSize])
 }
 
 // Sign is used to proof the payer ordered the spending
-func (tx *TransactionOutput) Sign(priv *rsa.PrivateKey) {
-	signature := SignWithPrivateKey(tx.PresSignatureHash(), priv)
-	copy(tx.Signature[0:SignatureSize], signature[0:SignatureSize])
+func (to *TransactionOutput) Sign(priv *rsa.PrivateKey) {
+	signature := SignWithPrivateKey(to.PresSignatureHash(), priv)
+	copy(to.Signature[0:SignatureSize], signature[0:SignatureSize])
 }
 
 // Verify verify ownership of payer
-func (tx *TransactionOutput) Verify(PayerPublicKey [KeySize]byte) bool {
-	return VerifyWithPublicKey(tx.PresSignatureHash(), tx.Signature, BytesToPublicKey(PayerPublicKey))
+func (to *TransactionOutput) Verify(PayerPublicKey [KeySize]byte) bool {
+	return VerifyWithPublicKey(to.PresSignatureHash(), to.Signature, BytesToPublicKey(PayerPublicKey))
 }
 
 //###########################################################

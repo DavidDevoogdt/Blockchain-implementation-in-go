@@ -3,171 +3,172 @@ package main
 import (
 	"fmt"
 	bc "project/pkg/blockchain"
-	"time"
+	"strconv"
 
-	"github.com/sasha-s/go-deadlock"
 	"gopkg.in/abiosoft/ishell.v2"
 )
 
 func main() {
-	fmt.Print("press enter: ")
-	var input string
-	fmt.Scanln(&input)
-	if input != "debug" {
 
-		NumberOfMiners := 1
-		broadcaster := bc.NewBroadcaster("Main network")
-		Miners := make([]*bc.Miner, 1)
-		Miners[0] = bc.BlockChainGenesis("Genesis", 3, broadcaster)
-		MinerNames := make([]string, 1)
-		MinerNames[0] = "Genesis"
+	// ##################
+	shell := ishell.New()
 
-		// ##################
-		shell := ishell.New()
+	shell.Println("Welcome to davidcoin shell.")
+	shell.Print("number of miners to start with: ")
+	NumberOfMiners, _ := strconv.Atoi(shell.ReadLine())
 
-		shell.Println("Welcome to davidcoin shell. start by typing help")
+	broadcaster := bc.NewBroadcaster("Main network")
+	Miners := make([]*bc.Miner, NumberOfMiners)
+	Miners[0] = bc.BlockChainGenesis("miner0", 3, broadcaster)
+	MinerNames := make([]string, NumberOfMiners)
+	MinerNames[0] = "miner0"
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "AddMiner",
-			Help: "AddMiner -n name -d true",
-			Func: func(c *ishell.Context) {
-				c.ShowPrompt(false)
-				defer c.ShowPrompt(true) // yes, revert after login.
+	for i := 1; i < NumberOfMiners; i++ {
+		mName := fmt.Sprintf("miner%d", i)
+		fmt.Printf("seting up miner %s\n", mName)
+		Miners[i] = bc.CreateMiner(mName, broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+		MinerNames[i] = mName
+	}
 
-				// get username
-				c.Print("Name miner: ")
-				name := c.ReadLine()
+	for i := 0; i < NumberOfMiners; i++ {
+		go Miners[i].MineContiniously()
+	}
 
-				m := bc.CreateMiner(name, broadcaster, Miners[0].BlockChain.SerializeBlockChain())
-				NumberOfMiners++
-				Miners = append(Miners, m)
-				MinerNames = append(MinerNames, name)
+	shell.AddCmd(&ishell.Cmd{
+		Name: "AddMiner",
+		Help: "AddMiner -n name -d true",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
 
-				choice := c.MultiChoice([]string{
-					"Miner",
-					"Observer",
-				}, "Role of miner")
-				if choice == 0 {
-					go m.MineContiniously()
-				}
+			c.Print("Name miner: ")
+			name := c.ReadLine()
 
-				choice2 := c.MultiChoice([]string{
-					"No",
-					"Yes",
-				}, "Print every debug message on this shell")
-				if choice2 == 1 {
-					m.StartDebug()
-				}
-				c.Println("Created Miner.")
-			},
-		})
+			m := bc.CreateMiner(name, broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+			NumberOfMiners++
+			Miners = append(Miners, m)
+			MinerNames = append(MinerNames, name)
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "PrintMiner",
-			Help: "PrintMiner",
-			Func: func(c *ishell.Context) {
-				c.ShowPrompt(false)
-				defer c.ShowPrompt(true) // yes, revert after login.
+			choice := c.MultiChoice([]string{
+				"Miner",
+				"Observer",
+			}, "Role of miner")
+			if choice == 0 {
+				go m.MineContiniously()
+			}
 
-				choice := c.MultiChoice(MinerNames, "Chose miner")
+			choice2 := c.MultiChoice([]string{
+				"No",
+				"Yes",
+			}, "Print every debug message on this shell")
+			if choice2 == 1 {
+				m.StartDebug()
+			}
+			c.Println("Created Miner.")
+		},
+	})
 
-				Miners[choice].Print()
-			},
-		})
+	shell.AddCmd(&ishell.Cmd{
+		Name: "PrintMiner",
+		Help: "PrintMiner",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "PrintEveryone",
-			Help: "Print every miner Miner",
-			Func: func(c *ishell.Context) {
-				c.ShowPrompt(false)
-				defer c.ShowPrompt(true) // yes, revert after login.
+			choice := c.MultiChoice(MinerNames, "Chose miner")
 
-				fmt.Printf("##########################################################################")
+			Miners[choice].Print()
+		},
+	})
 
-				Miners[0].Print()
-				for i := 1; i < NumberOfMiners; i++ {
-					Miners[i].PrintHash(3)
-				}
+	shell.AddCmd(&ishell.Cmd{
+		Name: "PrintEveryone",
+		Help: "Print every miner Miner",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
 
-				fmt.Printf("##########################################################################")
+			fmt.Printf("##########################################################################")
 
-			},
-		})
+			Miners[0].Print()
+			for i := 1; i < NumberOfMiners; i++ {
+				Miners[i].PrintHash(3)
+			}
 
-		shell.Run()
+			fmt.Printf("##########################################################################")
 
-	} else {
+		},
+	})
 
-		NumberOfMiners := 6
+	shell.AddCmd(&ishell.Cmd{
+		Name: "PrintBelongings",
+		Help: "Print the current cash status of selected poeple",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
 
+			choices := c.Checklist(MinerNames, "select the miners", nil)
+
+			c.Println(choices)
+			for _, j := range choices {
+				Miners[j].Wallet.Print()
+			}
+
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "MakeTransaction",
+		Help: "make a transaction",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
+
+			payer := Miners[c.MultiChoice(MinerNames, "Chose Payer:")]
+			receiver := Miners[c.MultiChoice(MinerNames, "Chose receiver:")]
+			shell.Print("amount: ")
+			amount, _ := strconv.ParseFloat(shell.ReadLine(), 64)
+			shell.Print("message for transaction: ")
+			msg := shell.ReadLine()
+
+			ret := payer.Wallet.MakeTransaction(receiver.Wallet.PublicKey, msg, uint64(amount*1e18))
+			if ret {
+				c.Printf("transaction of %.4f from %s to %s was succesfull\n", amount, payer.Name, receiver.Name)
+			} else {
+				c.Printf("transaction of %.4f from %s to %s was unsuccesfull\n", amount, payer.Name, receiver.Name)
+			}
+
+		},
+	})
+
+	shell.Run()
+	/*	NumberOfMiners := 5
 		broadcaster := bc.NewBroadcaster("Main network")
 		Miners := make([]*bc.Miner, NumberOfMiners)
-
-		fmt.Printf("made broadcaster\n")
-
-		var minersMutex deadlock.Mutex
-
-		Miners[0] = bc.BlockChainGenesis("Genesis", 3, broadcaster)
-
+		Miners[0] = bc.BlockChainGenesis("miner0", 3, broadcaster)
+		go Miners[0].MineContiniously()
 		Miners[0].StartDebug()
-
-		fmt.Printf("made genesis miner\n")
+		MinerNames := make([]string, NumberOfMiners)
+		MinerNames[0] = "miner0"
 
 		for i := 1; i < NumberOfMiners; i++ {
-			fmt.Printf("seting up miner %d\n", i)
-			Miners[i] = bc.CreateMiner(fmt.Sprintf("miner%d", i), broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+			mName := fmt.Sprintf("miner%d", i)
+			fmt.Printf("seting up miner %s\n", mName)
+			Miners[i] = bc.CreateMiner(mName, broadcaster, Miners[0].BlockChain.SerializeBlockChain())
+			MinerNames[i] = mName
+			Miners[i].StartDebug()
 		}
 
 		for i := 0; i < NumberOfMiners; i++ {
 			go Miners[i].MineContiniously()
 		}
 
-		InsertMiner := time.Tick(1000 * time.Millisecond)
-
-		go func() {
-			for {
-				<-InsertMiner
-				m := bc.MinerFromScratch(fmt.Sprintf("miner%d", NumberOfMiners), broadcaster)
-
-				minersMutex.Lock()
-				Miners = append(Miners, m)
-				NumberOfMiners++
-				n := NumberOfMiners
-				minersMutex.Unlock()
-
-				//m.StartDebug()
-
-				if n%2 == 0 {
-					go m.MineContiniously()
-				}
-
-				if n == 20 {
-					return
-				}
-
-			}
-
-		}()
-
-		End := time.Tick(10000 * time.Millisecond)
+		k := time.Tick(10000 * time.Millisecond)
 
 		for {
-			<-End
-			go func() {
-				fmt.Printf("##########################################################################")
+			<-k
+			fmt.Printf("miner 0 has %d money\n", Miners[0].Wallet.TotalUnspent())
+			Miners[0].Wallet.MakeTransaction(Miners[1].Wallet.PublicKey, "yeet", uint64(0.5e18))
+		}*/
 
-				minersMutex.Lock()
-				Miners[0].Print()
-				for i := 1; i < NumberOfMiners; i++ {
-					Miners[i].PrintHash(3)
-					//Miners[i].PrintHash(3)
-				}
-				minersMutex.Unlock()
-
-				fmt.Printf("##########################################################################")
-
-			}()
-
-		}
-	}
 }
