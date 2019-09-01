@@ -62,7 +62,7 @@ func main() {
 				"Yes",
 			}, "Print every debug message on this shell")
 			if choice2 == 1 {
-				m.StartDebug()
+				m.SetDebug(true)
 			}
 			c.Println("Created Miner.")
 		},
@@ -113,6 +113,42 @@ func main() {
 			for _, j := range choices {
 				Miners[j].Wallet.Print()
 			}
+
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "PrintBelongingsEveryone",
+		Help: "Print the current cash status of all miners",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
+
+			for _, m := range Miners {
+				m.Wallet.Print()
+			}
+
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "Diagnostics",
+		Help: "Print some diagnostics usefull for debugging",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
+
+			var am uint64
+
+			for _, m := range Miners {
+				k := m.Wallet.TotalUnspent()
+				c.Printf("%s has %.4f\n", m.Name, float64(k)/1e18)
+				am += k
+			}
+
+			n := Miners[0].BlockChain.GetHead().GetBlockNum()
+
+			fmt.Printf("totalBlocks: %d, total money: %.4f", n, float64(am)/1e18)
 
 		},
 	})
