@@ -1,7 +1,7 @@
 //copied from https://gist.github.com/miguelmota/3ea9286bd1d3c2a985b67cac4ba2130a
 //adapted for fixed keysize
 
-package davidcoin
+package rsautil
 
 import (
 	"crypto"
