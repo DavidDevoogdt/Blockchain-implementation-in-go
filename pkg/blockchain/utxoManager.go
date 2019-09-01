@@ -7,35 +7,35 @@ import (
 	"github.com/sasha-s/go-deadlock"
 )
 
-// UTxOManager keeps track of unspent transaction outputs (utxo)
-type UTxOManager struct {
+// uTxOManager keeps track of unspent transaction outputs (utxo)
+type uTxOManager struct {
 	attachedBlockChainNode *BlockChainNode
 	Miner                  *Miner
 
 	umMutex deadlock.RWMutex
 
-	UtxOMap            map[[32]byte]map[uint8]map[uint8]bool //blockhash -> tx block number -> output number
+	utxOMap            map[[32]byte]map[uint8]map[uint8]bool //blockhash -> tx block number -> output number
 	mapMutex           sync.RWMutex
 	secondLayerMutexes [256]sync.RWMutex
 	thirdLayerMutexes  [256]sync.RWMutex //to protect all the nested maps, a common set of mutexes is used irrespective of the block hash. This is lightweight and still faster than using a single mutex for all
 
 }
 
-// InitializeUTxOMananger is used to initialize the blockchain
-func InitializeUTxOMananger(m *Miner) *UTxOManager {
-	utxo := new(UTxOManager)
-	utxo.UtxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
+// initializeUTxOMananger is used to initialize the blockchain
+func initializeUTxOMananger(m *Miner) *uTxOManager {
+	utxo := new(uTxOManager)
+	utxo.utxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
 	utxo.Miner = m
 	utxo.attachedBlockChainNode = m.BlockChain.Root
-	utxo.attachedBlockChainNode.HasData = false
-	utxo.attachedBlockChainNode.UTxOManagerIsUpToDate = true
+	utxo.attachedBlockChainNode.hasData = false
+	utxo.attachedBlockChainNode.uTxOManagerIsUpToDate = true
 	return utxo
 }
 
-// VerifyTransactionRef checks whether a transactionref is spendable
-func (um *UTxOManager) VerifyTransactionRef(tr *TransactionRef) bool {
+// verifyTransactionRef checks whether a transactionref is spendable
+func (um *uTxOManager) verifyTransactionRef(tr *transactionRef) bool {
 	um.mapMutex.RLock()
-	a, ok := um.UtxOMap[tr.BlockHash]
+	a, ok := um.utxOMap[tr.BlockHash]
 	um.mapMutex.RUnlock()
 
 	if !ok {
@@ -64,11 +64,11 @@ func (um *UTxOManager) VerifyTransactionRef(tr *TransactionRef) bool {
 }
 
 // VerifyTransactionBlockRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
-func (um *UTxOManager) VerifyTransactionBlockRefs(tb *TransactionBlock) bool {
+func (um *uTxOManager) VerifyTransactionBlockRefs(tb *transactionBlock) bool {
 
 	for _, b := range tb.InputList[:] {
 
-		if !um.VerifyTransactionRef(b.reference) {
+		if !um.verifyTransactionRef(b.reference) {
 			return false
 		}
 	}
@@ -76,13 +76,13 @@ func (um *UTxOManager) VerifyTransactionBlockRefs(tb *TransactionBlock) bool {
 	return true
 }
 
-// VerifyTransactionBlockGroupRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
-func (um *UTxOManager) VerifyTransactionBlockGroupRefs(tbg *TransactionBlockGroup) bool {
+// verifyTransactionBlockGroupRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
+func (um *uTxOManager) verifyTransactionBlockGroupRefs(tbg *transactionBlockGroup) bool {
 
 	for _, tb := range tbg.TransactionBlockStructs {
 		for _, b := range tb.InputList[:] {
 
-			if !um.VerifyTransactionRef(b.reference) {
+			if !um.verifyTransactionRef(b.reference) {
 				return false
 			}
 		}
@@ -90,13 +90,13 @@ func (um *UTxOManager) VerifyTransactionBlockGroupRefs(tbg *TransactionBlockGrou
 	return true
 }
 
-// UpdateWithNextBlockChainNode adds new data to map. Deepcopy preserves map to previous block
-func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCopy bool) (succeeded bool) {
+// updateWithNextBlockChainNode adds new data to map. Deepcopy preserves map to previous block
+func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCopy bool) (succeeded bool) {
 	succeeded = true
 
 	bcn.generalMutex.RLock()
-	_prevBCN := bcn.PrevBlockChainNode
-	tbg := bcn.DataPointer
+	_prevBCN := bcn.previousBlockChainNode
+	tbg := bcn.dataPointer
 	bcn.generalMutex.RUnlock()
 
 	um.umMutex.RLock()
@@ -104,7 +104,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	_miner := um.Miner
 	um.umMutex.RUnlock()
 
-	var umn *UTxOManager
+	var umn *uTxOManager
 	_ = umn
 	if deepCopy {
 		umn = um.Deepcopy() // cannot be done async because the state would be changed
@@ -127,7 +127,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 	_prevBCN.generalMutex.RLock()
 
-	if !bcn.PrevBlockChainNode.UTxOManagerIsUpToDate {
+	if !bcn.previousBlockChainNode.uTxOManagerIsUpToDate {
 		_miner.DebugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping \n"))
 	}
 	_prevBCN.generalMutex.RUnlock()
@@ -143,7 +143,7 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 			//go func() {
 			tr := txInput.reference
 			um.mapMutex.RLock()
-			a, ok := um.UtxOMap[tr.BlockHash]
+			a, ok := um.utxOMap[tr.BlockHash]
 			um.mapMutex.RUnlock()
 
 			if !ok {
@@ -178,13 +178,13 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 		}
 
 		um.mapMutex.RLock()
-		a, ok := um.UtxOMap[bcn.Hash]
+		a, ok := um.utxOMap[bcn.Hash]
 		um.mapMutex.RUnlock()
 
 		if !ok {
 			a = make(map[uint8]map[uint8]bool)
 			um.mapMutex.Lock()
-			um.UtxOMap[bcn.Hash] = a
+			um.utxOMap[bcn.Hash] = a
 			um.mapMutex.Unlock()
 		}
 
@@ -228,34 +228,34 @@ func (um *UTxOManager) UpdateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 	_prevBCN.generalMutex.Lock()
 	if deepCopy {
-		_prevBCN.UTxOManagerIsUpToDate = true
-		_prevBCN.UTxOManagerPointer = umn
+		_prevBCN.uTxOManagerIsUpToDate = true
+		_prevBCN.uTxOManagerPointer = umn
 		umn.attachedBlockChainNode = _prevBCN
 	} else {
-		bcn.PrevBlockChainNode.UTxOManagerIsUpToDate = false
-		bcn.PrevBlockChainNode.UTxOManagerPointer = nil
+		bcn.previousBlockChainNode.uTxOManagerIsUpToDate = false
+		bcn.previousBlockChainNode.uTxOManagerPointer = nil
 
 	}
 	_prevBCN.generalMutex.Unlock()
 
 	_attachedBCN.generalMutex.Lock()
-	_attachedBCN.UTxOManagerIsUpToDate = true
-	_attachedBCN.UTxOManagerPointer = um
+	_attachedBCN.uTxOManagerIsUpToDate = true
+	_attachedBCN.uTxOManagerPointer = um
 	_attachedBCN.generalMutex.Unlock()
 
 	return true
 }
 
 // Deepcopy generates exact copy at different memory location
-func (um *UTxOManager) Deepcopy() *UTxOManager {
+func (um *uTxOManager) Deepcopy() *uTxOManager {
 	var wg sync.WaitGroup
-	umCopy := new(UTxOManager)
+	umCopy := new(uTxOManager)
 
 	um.umMutex.Lock()
 	umCopy.attachedBlockChainNode = um.attachedBlockChainNode
 	um.umMutex.Unlock()
 
-	umCopy.UtxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
+	umCopy.utxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
 
 	// acquire all locks for second layer
 	for i := range um.secondLayerMutexes {
@@ -268,11 +268,12 @@ func (um *UTxOManager) Deepcopy() *UTxOManager {
 	}
 
 	um.mapMutex.RLock()
-	for k, v := range um.UtxOMap {
+	for k, v := range um.utxOMap {
 		wg.Add(1)
 
 		go func(v map[uint8]map[uint8]bool, k [32]byte) {
 			newMap := make(map[uint8]map[uint8]bool)
+			var newMapMutex sync.Mutex
 			for k2, v2 := range v {
 				wg.Add(1)
 
@@ -281,15 +282,16 @@ func (um *UTxOManager) Deepcopy() *UTxOManager {
 					for k3, v3 := range v2 {
 						newMap2[k3] = v3
 					}
-					umCopy.secondLayerMutexes[k2].Lock()
+
+					newMapMutex.Lock()
 					newMap[k2] = newMap2
-					umCopy.secondLayerMutexes[k2].Unlock()
+					newMapMutex.Unlock()
 
 					wg.Done()
 				}(v2, k2)
 			}
 			umCopy.mapMutex.Lock()
-			umCopy.UtxOMap[k] = newMap
+			umCopy.utxOMap[k] = newMap
 			umCopy.mapMutex.Unlock()
 
 			wg.Done()
@@ -314,7 +316,7 @@ func (um *UTxOManager) Deepcopy() *UTxOManager {
 }
 
 //Print shows all unspent transactions
-func (um *UTxOManager) Print() {
+func (um *uTxOManager) Print() {
 
 	var wg sync.WaitGroup
 
@@ -329,7 +331,7 @@ func (um *UTxOManager) Print() {
 	}
 
 	um.mapMutex.RLock()
-	for k, v := range um.UtxOMap {
+	for k, v := range um.utxOMap {
 		wg.Add(1)
 
 		go func(v map[uint8]map[uint8]bool, k [32]byte) {

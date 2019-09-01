@@ -13,44 +13,44 @@ import (
 // addBlockChainNode adds a block based on its hash and does internal bookkeeping of the tree. If the block does not fit in the tree, a seperate orphanblockchain is created
 // The previous blocks are requested if needed. verifyAndBuildDown updates the the unspent transaction output mananger. Here it is checked whether the block and its data is vallid
 type BlockChain struct {
-	BlockChainMutex   deadlock.RWMutex
-	Head              *BlockChainNode
+	blockChainMutex   deadlock.RWMutex
+	head              *BlockChainNode
 	Root              *BlockChainNode
-	OrphanBlockChains []*BlockChain
-	IsOrphan          bool
+	orphanBlockChains []*BlockChain
+	isOrphan          bool
 	Height            uint32
 
 	utxoChan         chan *BlockChainNode
-	AllNodesMap      map[[32]byte]*BlockChainNode
-	AllNodesMapMutex sync.Mutex
+	allNodesMap      map[[32]byte]*BlockChainNode
+	allNodesMapMutex sync.Mutex
 
-	OtherHeadNodes      map[[32]byte]*BlockChainNode
-	OtherHeadNodesMutex sync.Mutex
+	otherHeadNodes      map[[32]byte]*BlockChainNode
+	otherHeadNodesMutex sync.Mutex
 
-	DanglingData      map[[32]byte]*TransactionBlockGroup // indexed by merkle root, not hash
-	DanglingDataMutex sync.RWMutex
+	danglingData      map[[32]byte]*transactionBlockGroup // indexed by merkle root, not hash
+	danglingDataMutex sync.RWMutex
 
-	MerkleRootToBlockHashMap      map[[32]byte][32]byte
-	MerkleRootToBlockHashMapMutex sync.RWMutex
+	merkleRootToBlockHashMap      map[[32]byte][32]byte
+	merkleRootToBlockHashMapMutex sync.RWMutex
 
 	Miner *Miner
 }
 
 // BlockChainNode links block to previous parent
 type BlockChainNode struct {
-	generalMutex       deadlock.RWMutex
-	PrevBlockChainNode *BlockChainNode
-	NextBlockChainNode *BlockChainNode
-	Block              *Block
-	Hash               [32]byte
+	generalMutex           deadlock.RWMutex
+	previousBlockChainNode *BlockChainNode
+	nextBlockChainNode     *BlockChainNode
+	Block                  *block
+	Hash                   [32]byte
 
-	HasData     bool
-	DataPointer *TransactionBlockGroup
+	hasData     bool
+	dataPointer *transactionBlockGroup
 
-	UTxOManagerPointer      *UTxOManager
-	UTxOManagerIsUpToDate   bool
-	VerifiedWithUtxoManager bool
-	Badblock                bool // true if verified bad
+	uTxOManagerPointer      *uTxOManager
+	uTxOManagerIsUpToDate   bool
+	verifiedWithUtxoManager bool
+	badblock                bool // true if verified bad
 
 	dataHasArrived chan bool
 
@@ -61,7 +61,7 @@ type BlockChainNode struct {
 
 // return bool specifies whether miner should stop immediately
 // has no nested locks
-func (bc *BlockChain) addBlockChainNode(block0 *Block) {
+func (bc *BlockChain) addBlockChainNode(block0 *block) {
 
 	// only request blockchain lock directly
 
@@ -78,38 +78,38 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 		}
 	}()
 
-	bc.BlockChainMutex.RLock()
-	bcHead := bc.Head
-	bcIsOrphan := bc.IsOrphan
+	bc.blockChainMutex.RLock()
+	bcHead := bc.head
+	bcIsOrphan := bc.isOrphan
 	bcMiner := bc.Miner
-	bc.BlockChainMutex.RUnlock()
+	bc.blockChainMutex.RUnlock()
 
 	_Hash := block0.Hash()
 	_PrevHash := block0.PrevHash
 	_Merkle := block0.MerkleRoot
 
-	bc.AllNodesMapMutex.Lock()
-	_, nok := bc.AllNodesMap[block0.Hash()]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	_, nok := bc.allNodesMap[block0.Hash()]
+	bc.allNodesMapMutex.Unlock()
 
 	if nok {
 		bc.Miner.DebugPrint(fmt.Sprintf("already in chain\n"))
 		return
 	}
 
-	bc.MerkleRootToBlockHashMapMutex.Lock()
-	bc.MerkleRootToBlockHashMap[_Merkle] = _Hash
-	bc.MerkleRootToBlockHashMapMutex.Unlock()
+	bc.merkleRootToBlockHashMapMutex.Lock()
+	bc.merkleRootToBlockHashMap[_Merkle] = _Hash
+	bc.merkleRootToBlockHashMapMutex.Unlock()
 
-	bc.AllNodesMapMutex.Lock()
-	prevBlock, ok := bc.AllNodesMap[_PrevHash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	prevBlock, ok := bc.allNodesMap[_PrevHash]
+	bc.allNodesMapMutex.Unlock()
 
 	if !ok {
 
-		for _, obc := range bc.OrphanBlockChains[:] {
-			obc.BlockChainMutex.Lock()
-			defer obc.BlockChainMutex.Unlock()
+		for _, obc := range bc.orphanBlockChains[:] {
+			obc.blockChainMutex.Lock()
+			defer obc.blockChainMutex.Unlock()
 
 			if obc.HasBlock(_PrevHash) {
 				bcMiner.DebugPrint(fmt.Sprintf("block added to orphaned chain \n"))
@@ -122,24 +122,24 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 		}
 
 		// check whether hash is prevhash of orphan chain root
-		for _, obc := range bc.OrphanBlockChains[:] {
+		for _, obc := range bc.orphanBlockChains[:] {
 
 			if obc.Root.Block.PrevHash == _Hash {
 				newBCN := new(BlockChainNode)
 				newBCN.Block = block0
 				newBCN.Hash = _Hash
 				newBCN.dataHasArrived = make(chan bool)
-				obc.Root.PrevBlockChainNode = newBCN
-				newBCN.NextBlockChainNode = obc.Root
+				obc.Root.previousBlockChainNode = newBCN
+				newBCN.nextBlockChainNode = obc.Root
 				obc.Root = newBCN
 
-				bc.AllNodesMapMutex.Lock()
-				obc.AllNodesMap[_Hash] = newBCN
-				bc.AllNodesMapMutex.Unlock()
+				bc.allNodesMapMutex.Lock()
+				obc.allNodesMap[_Hash] = newBCN
+				bc.allNodesMapMutex.Unlock()
 
 				bcMiner.DebugPrint(fmt.Sprintf("setting new root for orphaned chain \n"))
 
-				go bcMiner.RequestBlockFromHash(block0.PrevHash)
+				go bcMiner.requestBlockFromHash(block0.PrevHash)
 
 				return
 			}
@@ -148,11 +148,11 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 		bcMiner.DebugPrint(fmt.Sprintf("prev Block not in history, requesting %.10x\n", _PrevHash))
 		bcMiner.DebugPrint(fmt.Sprintf("creating new orphaned chain \n"))
 
-		bc.BlockChainMutex.Lock()
-		bc.OrphanBlockChains = append(bc.OrphanBlockChains, bc.InitializeOrphanBlockChain(block0))
-		bc.BlockChainMutex.Unlock()
+		bc.blockChainMutex.Lock()
+		bc.orphanBlockChains = append(bc.orphanBlockChains, bc.initializeOrphanBlockChain(block0))
+		bc.blockChainMutex.Unlock()
 
-		go bc.Miner.RequestBlockFromHash(block0.PrevHash)
+		go bc.Miner.requestBlockFromHash(block0.PrevHash)
 
 		return
 
@@ -163,21 +163,21 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 	newBCN.Block = block0
 	newBCN.Hash = block0.Hash()
 	newBCN.dataHasArrived = make(chan bool)
-	newBCN.HasData = false
-	newBCN.UTxOManagerIsUpToDate = false
+	newBCN.hasData = false
+	newBCN.uTxOManagerIsUpToDate = false
 
-	bc.AllNodesMapMutex.Lock()
-	bc.AllNodesMap[_Hash] = newBCN
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	bc.allNodesMap[_Hash] = newBCN
+	bc.allNodesMapMutex.Unlock()
 
 	prevBlock.generalMutex.Lock()
-	prevBlock.NextBlockChainNode = newBCN
+	prevBlock.nextBlockChainNode = newBCN
 	prevBlock.generalMutex.Unlock()
 
-	newBCN.PrevBlockChainNode = prevBlock
+	newBCN.previousBlockChainNode = prevBlock
 
 	// check whether hash is contained as prehash in orphaned chains
-	for i, obcR := range bc.OrphanBlockChains {
+	for i, obcR := range bc.orphanBlockChains {
 
 		obc := obcR
 
@@ -186,35 +186,35 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 		if _Hash == obc.Root.Block.PrevHash {
 			//defer obc.BlockChainMutex.Unlock()
 
-			obc.Root.PrevBlockChainNode = newBCN
-			obcHead := obc.Head
+			obc.Root.previousBlockChainNode = newBCN
+			obcHead := obc.head
 			obc.Root.generalMutex.Unlock()
 
 			bcMiner.DebugPrint(fmt.Sprintf("joining orphaned chain to main chain!\n"))
 			// delete prev node from head if that were the case
 
-			bc.OtherHeadNodesMutex.Lock()
-			delete(bc.OtherHeadNodes, _PrevHash)
-			for k, v := range obc.OtherHeadNodes { //merge hashmaps
-				bc.OtherHeadNodes[k] = v
+			bc.otherHeadNodesMutex.Lock()
+			delete(bc.otherHeadNodes, _PrevHash)
+			for k, v := range obc.otherHeadNodes { //merge hashmaps
+				bc.otherHeadNodes[k] = v
 			}
-			bc.OtherHeadNodesMutex.Unlock()
+			bc.otherHeadNodesMutex.Unlock()
 
-			bc.AllNodesMapMutex.Lock()
-			for k, v := range obc.AllNodesMap {
-				bc.AllNodesMap[k] = v
+			bc.allNodesMapMutex.Lock()
+			for k, v := range obc.allNodesMap {
+				bc.allNodesMap[k] = v
 			}
-			bc.AllNodesMapMutex.Unlock()
+			bc.allNodesMapMutex.Unlock()
 
 			// put orphaned blockchain to last element and remove it
-			l := len(bc.OrphanBlockChains)
+			l := len(bc.orphanBlockChains)
 
-			bc.BlockChainMutex.Lock()
-			bc.OrphanBlockChains[i] = bc.OrphanBlockChains[l-1]
-			bc.OrphanBlockChains = bc.OrphanBlockChains[:l-1]
-			bc.BlockChainMutex.Unlock()
+			bc.blockChainMutex.Lock()
+			bc.orphanBlockChains[i] = bc.orphanBlockChains[l-1]
+			bc.orphanBlockChains = bc.orphanBlockChains[:l-1]
+			bc.blockChainMutex.Unlock()
 
-			orphanHead := obc.Head
+			orphanHead := obc.head
 
 			obcHead.generalMutex.RLock()
 			olen := orphanHead.Block.BlockCount
@@ -240,23 +240,23 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 
 	//nothing special, just main chain
 
-	bc.OtherHeadNodesMutex.Lock()
-	_, ok = bc.OtherHeadNodes[_PrevHash]
-	bc.OtherHeadNodesMutex.Unlock()
+	bc.otherHeadNodesMutex.Lock()
+	_, ok = bc.otherHeadNodes[_PrevHash]
+	bc.otherHeadNodesMutex.Unlock()
 
 	if ok {
 		bcMiner.DebugPrint(fmt.Sprintf("added to head chain \n"))
 
-		bc.OtherHeadNodesMutex.Lock()
-		delete(bc.OtherHeadNodes, _PrevHash)
-		bc.OtherHeadNodes[_Hash] = newBCN
-		bc.OtherHeadNodesMutex.Unlock()
+		bc.otherHeadNodesMutex.Lock()
+		delete(bc.otherHeadNodes, _PrevHash)
+		bc.otherHeadNodes[_Hash] = newBCN
+		bc.otherHeadNodesMutex.Unlock()
 
 	} else {
 
-		bc.OtherHeadNodesMutex.Lock()
-		bc.OtherHeadNodes[newBCN.Hash] = newBCN
-		bc.OtherHeadNodesMutex.Unlock()
+		bc.otherHeadNodesMutex.Lock()
+		bc.otherHeadNodes[newBCN.Hash] = newBCN
+		bc.otherHeadNodesMutex.Unlock()
 		bcMiner.DebugPrint(fmt.Sprintf("new fork created \n"))
 	}
 
@@ -265,7 +265,7 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 
 	if hlen < newBCN.Block.BlockCount {
 		if bcIsOrphan {
-			bc.Head = newBCN
+			bc.head = newBCN
 		} else {
 			Endfunctions = append(Endfunctions, func() {
 				go func() { bc.utxoChan <- newBCN }()
@@ -279,35 +279,35 @@ func (bc *BlockChain) addBlockChainNode(block0 *Block) {
 
 }
 
-//AddInternal is used to add mined block and data at once
-func (bc *BlockChain) AddInternal(block0 *Block, data *TransactionBlockGroup) {
+//addInternal is used to add mined block and data at once
+func (bc *BlockChain) addInternal(block0 *block, data *transactionBlockGroup) {
 	// todo add checks
 
 	_Hash := block0.Hash()
 	_PrevHash := block0.PrevHash
 
-	bc.AllNodesMapMutex.Lock()
-	prevBlock := bc.AllNodesMap[_PrevHash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	prevBlock := bc.allNodesMap[_PrevHash]
+	bc.allNodesMapMutex.Unlock()
 
 	// prevhash in this chain, create new blockNode
 	newBCN := new(BlockChainNode)
 	newBCN.Block = block0
 	newBCN.Hash = block0.Hash()
 	newBCN.dataHasArrived = make(chan bool)
-	newBCN.HasData = true
-	newBCN.DataPointer = data
-	newBCN.UTxOManagerIsUpToDate = false
+	newBCN.hasData = true
+	newBCN.dataPointer = data
+	newBCN.uTxOManagerIsUpToDate = false
 
-	bc.AllNodesMapMutex.Lock()
-	bc.AllNodesMap[_Hash] = newBCN
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	bc.allNodesMap[_Hash] = newBCN
+	bc.allNodesMapMutex.Unlock()
 
-	bc.MerkleRootToBlockHashMapMutex.Lock()
-	bc.MerkleRootToBlockHashMap[block0.MerkleRoot] = _Hash
-	bc.MerkleRootToBlockHashMapMutex.Unlock()
+	bc.merkleRootToBlockHashMapMutex.Lock()
+	bc.merkleRootToBlockHashMap[block0.MerkleRoot] = _Hash
+	bc.merkleRootToBlockHashMapMutex.Unlock()
 
-	newBCN.PrevBlockChainNode = prevBlock
+	newBCN.previousBlockChainNode = prevBlock
 
 	bc.Miner.DebugPrint(fmt.Sprintf("added to main chain internally \n"))
 
@@ -315,39 +315,39 @@ func (bc *BlockChain) AddInternal(block0 *Block, data *TransactionBlockGroup) {
 
 }
 
-// AddData joins the incoming data to the actual structures
-func (bc *BlockChain) AddData(data []byte) {
+// addData joins the incoming data to the actual structures
+func (bc *BlockChain) addData(data []byte) {
 
-	tb := DeserializeTransactionBlockGroup(data[:], bc)
+	tb := deserializeTransactionBlockGroup(data[:], bc)
 
 	merkle := tb.merkleTree.GetMerkleRoot()
 
-	bc.MerkleRootToBlockHashMapMutex.Lock()
-	Hash, ok0 := bc.MerkleRootToBlockHashMap[merkle]
-	bc.MerkleRootToBlockHashMapMutex.Unlock()
+	bc.merkleRootToBlockHashMapMutex.Lock()
+	Hash, ok0 := bc.merkleRootToBlockHashMap[merkle]
+	bc.merkleRootToBlockHashMapMutex.Unlock()
 
 	if !ok0 {
 
-		bc.DanglingDataMutex.RLock()
-		_, ok := bc.DanglingData[merkle]
-		bc.DanglingDataMutex.RUnlock()
+		bc.danglingDataMutex.RLock()
+		_, ok := bc.danglingData[merkle]
+		bc.danglingDataMutex.RUnlock()
 
 		if ok {
 			bc.Miner.DebugPrint("data already known, but still dangling\n")
 			return
 		}
 
-		bc.DanglingDataMutex.Lock()
-		bc.DanglingData[merkle] = tb
-		bc.DanglingDataMutex.Unlock()
+		bc.danglingDataMutex.Lock()
+		bc.danglingData[merkle] = tb
+		bc.danglingDataMutex.Unlock()
 
 		bc.Miner.DebugPrint(fmt.Sprintf("added data as dangling, merkle = %x", merkle))
 		return
 	}
 
-	bc.AllNodesMapMutex.Lock()
-	val, ok := bc.AllNodesMap[Hash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	val, ok := bc.allNodesMap[Hash]
+	bc.allNodesMapMutex.Unlock()
 
 	if !ok {
 		bc.Miner.DebugPrint("Merkleroot known, but hashblock unknown, should not happen, root:%x hash:%x\n")
@@ -356,14 +356,14 @@ func (bc *BlockChain) AddData(data []byte) {
 
 	val.generalMutex.Lock()
 
-	if val.HasData {
+	if val.hasData {
 		bc.Miner.DebugPrint("received data already added to structure, send confirmation not good\n")
 		val.generalMutex.Unlock()
 		return
 	}
 
-	val.DataPointer = tb
-	val.HasData = true
+	val.dataPointer = tb
+	val.hasData = true
 
 	val.generalMutex.Unlock()
 
@@ -384,21 +384,21 @@ func (bc *BlockChain) utxoUpdater() {
 func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 
 	bcn.generalMutex.RLock()
-	_prevBCN := bcn.PrevBlockChainNode
+	_prevBCN := bcn.previousBlockChainNode
 	_prevHash := bcn.Block.PrevHash
-	bcnUTxOManagerIsUpToDate := bcn.UTxOManagerIsUpToDate
-	bcnHasData := bcn.HasData
+	bcnUTxOManagerIsUpToDate := bcn.uTxOManagerIsUpToDate
+	bcnhasData := bcn.hasData
 	_newHeight := bcn.Block.BlockCount
 	bcn.generalMutex.RUnlock()
 
-	bc.BlockChainMutex.RLock()
-	bcIsOrphan := bc.IsOrphan
+	bc.blockChainMutex.RLock()
+	bcIsOrphan := bc.isOrphan
 	bcMiner := bc.Miner
-	bc.BlockChainMutex.RUnlock()
+	bc.blockChainMutex.RUnlock()
 
 	_prevBCN.generalMutex.Lock()
-	_prevBCN.NextBlockChainNode = bcn // to restore ability to crawl back up
-	prevUTxOUptodate := bcn.PrevBlockChainNode.UTxOManagerIsUpToDate
+	_prevBCN.nextBlockChainNode = bcn // to restore ability to crawl back up
+	prevUTxOUptodate := bcn.previousBlockChainNode.uTxOManagerIsUpToDate
 	prevblockcount := _prevBCN.Block.BlockCount
 	_prevBCN.generalMutex.Unlock()
 
@@ -413,11 +413,11 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 	}
 
 	var waitingfordata = false
-	if !bcnHasData {
+	if !bcnhasData {
 
-		bc.DanglingDataMutex.Lock()
-		d, ok := bc.DanglingData[bcn.Block.MerkleRoot]
-		bc.DanglingDataMutex.Unlock()
+		bc.danglingDataMutex.Lock()
+		d, ok := bc.danglingData[bcn.Block.MerkleRoot]
+		bc.danglingDataMutex.Unlock()
 
 		if !ok {
 			var req [32]byte
@@ -426,18 +426,18 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 			copy(req[0:32], bcn.Hash[0:32])
 			bcn.generalMutex.RUnlock()
 
-			go bc.Miner.Request(RequestType["TransactionBlockGroupFromHash"], bc.Miner.Wallet.PublicKey, req[0:32])
+			go bc.Miner.request(requestType["TransactionBlockGroupFromHash"], bc.Miner.Wallet.PublicKey, req[0:32])
 			waitingfordata = true
 			bcMiner.DebugPrint(fmt.Sprintf("Requesting transactiondata for block %d: %x \n", _newHeight, req[0:32]))
 		} else {
 			bcMiner.DebugPrint(fmt.Sprintf("found data dangling for block %d: %x \n", bcn.Block.BlockCount, bcn.Hash[:]))
-			bc.MerkleRootToBlockHashMapMutex.Lock()
-			delete(bc.MerkleRootToBlockHashMap, bcn.Block.MerkleRoot)
-			bc.MerkleRootToBlockHashMapMutex.Unlock()
+			bc.merkleRootToBlockHashMapMutex.Lock()
+			delete(bc.merkleRootToBlockHashMap, bcn.Block.MerkleRoot)
+			bc.merkleRootToBlockHashMapMutex.Unlock()
 
 			bcn.generalMutex.Lock()
-			bcn.DataPointer = d
-			bcn.HasData = true
+			bcn.dataPointer = d
+			bcn.hasData = true
 			bcn.generalMutex.Unlock()
 		}
 
@@ -456,82 +456,82 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 	}
 
 	bcn.generalMutex.Lock()
-	bcnTbs := bcn.DataPointer
+	bcnTbs := bcn.dataPointer
 	bcn.generalMutex.Unlock()
 
 	_prevBCN.generalMutex.RLock()
-	prevUTXO := _prevBCN.UTxOManagerPointer
+	prevUTXO := _prevBCN.uTxOManagerPointer
 	_prevBCN.generalMutex.RUnlock()
 
-	goodTransactions := prevUTXO.VerifyTransactionBlockGroupRefs(bcnTbs)
+	goodTransactions := prevUTXO.verifyTransactionBlockGroupRefs(bcnTbs)
 	goodSignatures := bcnTbs.VerifyExceptUTXO()
 
 	bcn.generalMutex.Lock()
 	if !goodTransactions {
-		bcn.Badblock = true
+		bcn.badblock = true
 		bcMiner.DebugPrint("found bad block, transactions not matchin\n")
 	}
 
 	if !goodSignatures { // todo check previous blocks!
-		bcn.Badblock = true
+		bcn.badblock = true
 		bcMiner.DebugPrint("False signatures, not continuing\n")
 	}
 
-	bcn.VerifiedWithUtxoManager = true
+	bcn.verifiedWithUtxoManager = true
 	bcn.generalMutex.Unlock()
 
-	bc.BlockChainMutex.RLock()
+	bc.blockChainMutex.RLock()
 	bcheight := bc.Height
-	bc.BlockChainMutex.RUnlock()
+	bc.blockChainMutex.RUnlock()
 
 	if _newHeight > bcheight {
 
-		bc.OtherHeadNodesMutex.Lock()
-		_, ok3 := bc.OtherHeadNodes[_prevHash]
+		bc.otherHeadNodesMutex.Lock()
+		_, ok3 := bc.otherHeadNodes[_prevHash]
 		if ok3 {
-			bc.OtherHeadNodes[bc.Head.Hash] = bc.Head
-			delete(bc.OtherHeadNodes, bcn.PrevBlockChainNode.Hash)
+			bc.otherHeadNodes[bc.head.Hash] = bc.head
+			delete(bc.otherHeadNodes, bcn.previousBlockChainNode.Hash)
 		}
-		bc.OtherHeadNodesMutex.Unlock()
+		bc.otherHeadNodesMutex.Unlock()
 
-		bc.BlockChainMutex.Lock()
-		bc.Head = bcn
+		bc.blockChainMutex.Lock()
+		bc.head = bcn
 		bc.Height = _newHeight
-		bc.BlockChainMutex.Unlock()
+		bc.blockChainMutex.Unlock()
 
-		bcMiner.GeneralMutex.Lock()
+		bcMiner.generalMutex.Lock()
 		if bcMiner.isMining {
 			bcMiner.interrupt <- true
 		}
-		bcMiner.GeneralMutex.Unlock()
+		bcMiner.generalMutex.Unlock()
 
 		bcMiner.DebugPrint("Updated the head after verification\n")
 	}
 
 	keepCopy := _newHeight%5 == 1
 
-	succes := prevUTXO.UpdateWithNextBlockChainNode(bcn, keepCopy)
+	succes := prevUTXO.updateWithNextBlockChainNode(bcn, keepCopy)
 	if !succes {
 		log.Fatal(fmt.Sprintf("updating utxoManager Failed, should not happen! %s\n", bc.Miner.Name))
 		return
 	}
 
 	bcMiner.DebugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
-	bc.Miner.Wallet.UpdateWithBlock(bcn)
-	bc.Miner.tp.UpdateWithBlockchainNode(bcn)
+	bc.Miner.Wallet.updateWithBlock(bcn)
+	bc.Miner.tp.updateWithBlockchainNode(bcn)
 
 }
 
 //###############initalizationcode
 
 // SerializeBlockChain make byte array with complete blockchain
-func (bc *BlockChain) SerializeBlockChain() [][BlockSize]byte {
-	current := bc.Head
-	ret := make([][BlockSize]byte, current.Block.BlockCount+1)
+func (bc *BlockChain) SerializeBlockChain() [][blockSize]byte {
+	current := bc.head
+	ret := make([][blockSize]byte, current.Block.BlockCount+1)
 	for {
-		ret[current.Block.BlockCount] = current.Block.SerializeBlock()
+		ret[current.Block.BlockCount] = current.Block.serializeBlock()
 		if current.Block.BlockCount != 0 {
-			current = current.PrevBlockChainNode
+			current = current.previousBlockChainNode
 		} else {
 			break
 		}
@@ -540,55 +540,55 @@ func (bc *BlockChain) SerializeBlockChain() [][BlockSize]byte {
 }
 
 //DeserializeBlockChain get blockchain from byte array
-func DeserializeBlockChain(bc [][BlockSize]byte) *BlockChain {
+func DeserializeBlockChain(bc [][blockSize]byte) *BlockChain {
 	blockChain := new(BlockChain)
-	blockChain.AllNodesMap = make(map[[32]byte]*BlockChainNode)
-	blockChain.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OrphanBlockChains = make([]*BlockChain, 0)
-	blockChain.DanglingData = make(map[[32]byte]*TransactionBlockGroup)
-	blockChain.MerkleRootToBlockHashMap = make(map[[32]byte][32]byte)
+	blockChain.allNodesMap = make(map[[32]byte]*BlockChainNode)
+	blockChain.otherHeadNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.orphanBlockChains = make([]*BlockChain, 0)
+	blockChain.danglingData = make(map[[32]byte]*transactionBlockGroup)
+	blockChain.merkleRootToBlockHashMap = make(map[[32]byte][32]byte)
 
-	blockChain.IsOrphan = false
+	blockChain.isOrphan = false
 	blockChain.utxoChan = make(chan *BlockChainNode)
 
 	bcn := new(BlockChainNode)
 	bcn.dataHasArrived = make(chan bool)
-	bcn.Block = GenesisBlock
-	bcn.Hash = GenesisBlock.Hash()
-	bcn.PrevBlockChainNode = bcn
+	bcn.Block = genesisBlock
+	bcn.Hash = genesisBlock.Hash()
+	bcn.previousBlockChainNode = bcn
 
-	blockChain.Head = bcn
+	blockChain.head = bcn
 	blockChain.Root = bcn
-	blockChain.AllNodesMap[bcn.Hash] = bcn
-	blockChain.OtherHeadNodes[bcn.Hash] = bcn
+	blockChain.allNodesMap[bcn.Hash] = bcn
+	blockChain.otherHeadNodes[bcn.Hash] = bcn
 
-	bcn.UTxOManagerIsUpToDate = false
-	bcn.UTxOManagerPointer = nil
+	bcn.uTxOManagerIsUpToDate = false
+	bcn.uTxOManagerPointer = nil
 
-	bcn.HasData = false
+	bcn.hasData = false
 
 	//first block
 
 	for _, bl := range bc[:] {
-		blockChain.addBlockChainNode(DeserializeBlock(bl))
+		blockChain.addBlockChainNode(deserializeBlock(bl))
 	}
 
 	return blockChain
 }
 
-// InitializeOrphanBlockChain generates pointer to new bc
-func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
+// initializeOrphanBlockChain generates pointer to new bc
+func (bc *BlockChain) initializeOrphanBlockChain(bl *block) *BlockChain {
 
 	//bc.BlockChainMutex.Lock()
 	//defer bc.BlockChainMutex.Unlock()
 
 	blockChain := new(BlockChain)
-	blockChain.AllNodesMap = make(map[[32]byte]*BlockChainNode)
-	blockChain.OtherHeadNodes = make(map[[32]byte]*BlockChainNode)
-	blockChain.OrphanBlockChains = nil
-	blockChain.IsOrphan = true
-	blockChain.DanglingData = make(map[[32]byte]*TransactionBlockGroup)
-	blockChain.MerkleRootToBlockHashMap = make(map[[32]byte][32]byte)
+	blockChain.allNodesMap = make(map[[32]byte]*BlockChainNode)
+	blockChain.otherHeadNodes = make(map[[32]byte]*BlockChainNode)
+	blockChain.orphanBlockChains = nil
+	blockChain.isOrphan = true
+	blockChain.danglingData = make(map[[32]byte]*transactionBlockGroup)
+	blockChain.merkleRootToBlockHashMap = make(map[[32]byte][32]byte)
 
 	bcn := new(BlockChainNode)
 
@@ -596,12 +596,12 @@ func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 
 	bcn.Block = bl
 	bcn.Hash = bl.Hash()
-	bcn.PrevBlockChainNode = nil
+	bcn.previousBlockChainNode = nil
 
-	blockChain.Head = bcn
+	blockChain.head = bcn
 	blockChain.Root = bcn
-	blockChain.AllNodesMap[bcn.Hash] = bcn
-	blockChain.OtherHeadNodes[bcn.Hash] = bcn
+	blockChain.allNodesMap[bcn.Hash] = bcn
+	blockChain.otherHeadNodes[bcn.Hash] = bcn
 
 	blockChain.Miner = bc.Miner
 
@@ -614,9 +614,9 @@ func (bc *BlockChain) InitializeOrphanBlockChain(bl *Block) *BlockChain {
 
 // HasBlock determines whether block is in chain
 func (bc *BlockChain) HasBlock(hash [32]byte) bool {
-	bc.AllNodesMapMutex.Lock()
-	_, ok := bc.AllNodesMap[hash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	_, ok := bc.allNodesMap[hash]
+	bc.allNodesMapMutex.Unlock()
 	return ok
 }
 
@@ -625,7 +625,7 @@ func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
 	//bc.BlockChainMutex.RLock()
 	//defer bc.BlockChainMutex.RUnlock()
 
-	current := bc.Head
+	current := bc.head
 
 	max := current.Block.BlockCount
 
@@ -637,7 +637,7 @@ func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
 
 		current.generalMutex.RLock()
 		defer current.generalMutex.RUnlock()
-		current = current.PrevBlockChainNode
+		current = current.previousBlockChainNode
 	}
 
 	//bc.Miner.DebugPrint(("requested %d, got %d", height, current.Block.BlockCount)
@@ -647,45 +647,45 @@ func (bc *BlockChain) GetBlockChainNodeAtHeight(height uint32) *BlockChainNode {
 
 // GetBlockChainNodeAtHash fetches block
 func (bc *BlockChain) GetBlockChainNodeAtHash(hash [32]byte) *BlockChainNode {
-	bc.AllNodesMapMutex.Lock()
-	val, ok := bc.AllNodesMap[hash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	val, ok := bc.allNodesMap[hash]
+	bc.allNodesMapMutex.Unlock()
 
 	if ok {
 		return val
 	}
 
-	bc.BlockChainMutex.Lock()
-	for _, obc := range bc.OrphanBlockChains {
-		bc.BlockChainMutex.Unlock()
+	bc.blockChainMutex.Lock()
+	for _, obc := range bc.orphanBlockChains {
+		bc.blockChainMutex.Unlock()
 		val := obc.GetBlockChainNodeAtHash(hash)
 		if val != nil {
 			return val
 		}
-		bc.BlockChainMutex.Lock()
+		bc.blockChainMutex.Lock()
 	}
-	bc.BlockChainMutex.Unlock()
+	bc.blockChainMutex.Unlock()
 
 	return nil
 }
 
-// GetTransactionOutput turns reference into locally saved version err: 0->ok 1->block unknown 2->no data 3->data does not exist
-func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) (*TransactionOutput, uint8) {
+// getTransactionOutput turns reference into locally saved version err: 0->ok 1->block unknown 2->no data 3->data does not exist
+func (bc *BlockChain) getTransactionOutput(tr *transactionRef) (*transactionOutput, uint8) {
 
-	bc.AllNodesMapMutex.Lock()
-	bl, ok := bc.AllNodesMap[tr.BlockHash]
-	bc.AllNodesMapMutex.Unlock()
+	bc.allNodesMapMutex.Lock()
+	bl, ok := bc.allNodesMap[tr.BlockHash]
+	bc.allNodesMapMutex.Unlock()
 
 	if !ok {
 		return nil, uint8(1)
 	}
 
 	bl.generalMutex.RLock()
-	if bl.HasData == false {
+	if bl.hasData == false {
 		bl.generalMutex.RUnlock()
 		return nil, uint8(2)
 	}
-	dp := bl.DataPointer
+	dp := bl.dataPointer
 	bl.generalMutex.RUnlock()
 
 	if dp.size <= tr.TransactionBlockNumber {
@@ -703,16 +703,16 @@ func (bc *BlockChain) GetTransactionOutput(tr *TransactionRef) (*TransactionOutp
 
 // VerifyHash checks to blockchain from head to root
 func (bc *BlockChain) VerifyHash() bool {
-	BlockChainNode := bc.Head
+	BlockChainNode := bc.head
 
 	for BlockChainNode.Block.BlockCount != 0 {
 		if !BlockChainNode.Block.Verify() {
 			return false
 		}
-		if BlockChainNode.Block.PrevHash != BlockChainNode.PrevBlockChainNode.Block.Hash() {
+		if BlockChainNode.Block.PrevHash != BlockChainNode.previousBlockChainNode.Block.Hash() {
 			return false
 		}
-		BlockChainNode = BlockChainNode.PrevBlockChainNode
+		BlockChainNode = BlockChainNode.previousBlockChainNode
 	}
 	return true
 }
@@ -720,9 +720,9 @@ func (bc *BlockChain) VerifyHash() bool {
 // Print print
 func (bc *BlockChain) Print() {
 
-	bc.BlockChainMutex.RLock()
-	BlockChainNode := bc.Head
-	bc.BlockChainMutex.RUnlock()
+	bc.blockChainMutex.RLock()
+	BlockChainNode := bc.head
+	bc.blockChainMutex.RUnlock()
 
 	BlockChainNode.generalMutex.RLock()
 
@@ -730,13 +730,13 @@ func (bc *BlockChain) Print() {
 		k := BlockChainNode
 
 		BlockChainNode.Block.print()
-		if BlockChainNode.HasData {
-			fmt.Printf("merkleroot from data: %x", BlockChainNode.DataPointer.merkleTree.GetMerkleRoot())
+		if BlockChainNode.hasData {
+			fmt.Printf("merkleroot from data: %x", BlockChainNode.dataPointer.merkleTree.GetMerkleRoot())
 		} else {
 			fmt.Printf("this bcn has no data")
 		}
 
-		BlockChainNode = BlockChainNode.PrevBlockChainNode
+		BlockChainNode = BlockChainNode.previousBlockChainNode
 
 		k.generalMutex.RUnlock()
 
@@ -752,9 +752,9 @@ func (bc *BlockChain) Print() {
 // PrintHash print
 func (bc *BlockChain) PrintHash(n int) {
 
-	bc.BlockChainMutex.RLock()
-	BlockChainNode := bc.Head
-	bc.BlockChainMutex.RUnlock()
+	bc.blockChainMutex.RLock()
+	BlockChainNode := bc.head
+	bc.blockChainMutex.RUnlock()
 
 	BlockChainNode.generalMutex.Lock()
 
@@ -763,7 +763,7 @@ func (bc *BlockChain) PrintHash(n int) {
 			k := BlockChainNode
 			fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
 
-			BlockChainNode = BlockChainNode.PrevBlockChainNode
+			BlockChainNode = BlockChainNode.previousBlockChainNode
 
 			k.generalMutex.Unlock()
 
@@ -782,7 +782,7 @@ func (bc *BlockChain) PrintHash(n int) {
 		k := BlockChainNode.generalMutex.Unlock
 
 		fmt.Printf("%d:%x\n", BlockChainNode.Block.BlockCount, BlockChainNode.Block.Hash())
-		BlockChainNode = BlockChainNode.PrevBlockChainNode
+		BlockChainNode = BlockChainNode.previousBlockChainNode
 
 		k()
 
@@ -795,4 +795,22 @@ func (bc *BlockChain) PrintHash(n int) {
 	}
 	BlockChainNode.generalMutex.Unlock()
 
+}
+
+//GetHead returns the thead of the blockchain
+func (bc *BlockChain) GetHead() *BlockChainNode {
+
+	bc.blockChainMutex.RLock()
+	head := bc.head
+	bc.blockChainMutex.RUnlock()
+
+	return head
+}
+
+//GetBlockNum returns the block numbers of the referenced blockchainNode
+func (bcn *BlockChainNode) GetBlockNum() uint32 {
+	bcn.generalMutex.RLock()
+	defer bcn.generalMutex.RUnlock()
+
+	return bcn.Block.BlockCount
 }

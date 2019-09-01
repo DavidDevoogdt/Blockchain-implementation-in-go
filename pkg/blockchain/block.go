@@ -1,4 +1,5 @@
 package davidcoin
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -8,11 +9,11 @@ import (
 
 ///capital letter -> exported field
 
-// GenesisBlock is first block for everyone
-var GenesisBlock *Block
+// genesisBlock is first block for everyone
+var genesisBlock *block
 
-// Block is basic type for node in blockchain
-type Block struct {
+// block is basic type for node in blockchain
+type block struct {
 	MerkleRoot [32]byte
 	PrevHash   [32]byte
 	Nonce      uint32
@@ -20,12 +21,12 @@ type Block struct {
 	BlockCount uint32
 }
 
-// BlockSize size of serialized struct
-const BlockSize = 76
+// blockSize size of serialized struct
+const blockSize = 76
 
-// SerializeBlock serialize the content of the block
-func (b *Block) SerializeBlock() [BlockSize]byte {
-	var d [BlockSize]byte
+// serializeBlock serialize the content of the block
+func (b *block) serializeBlock() [blockSize]byte {
+	var d [blockSize]byte
 	copy(d[0:32], b.MerkleRoot[0:32])
 	copy(d[32:64], b.PrevHash[0:32])
 	binary.LittleEndian.PutUint32(d[64:68], b.Nonce)
@@ -34,9 +35,9 @@ func (b *Block) SerializeBlock() [BlockSize]byte {
 	return d
 }
 
-// DeserializeBlock does the inverse of SerializeBlock
-func DeserializeBlock(d [BlockSize]byte) *Block {
-	b := new(Block)
+// deserializeBlock does the inverse of serializeBlock
+func deserializeBlock(d [blockSize]byte) *block {
+	b := new(block)
 	copy(b.MerkleRoot[0:32], d[0:32])
 	copy(b.PrevHash[0:32], d[32:64])
 	b.Nonce = binary.LittleEndian.Uint32(d[64:68])
@@ -46,25 +47,25 @@ func DeserializeBlock(d [BlockSize]byte) *Block {
 }
 
 // Hash gets block hash
-func (b *Block) Hash() [32]byte {
-	a := b.SerializeBlock()
+func (b *block) Hash() [32]byte {
+	a := b.serializeBlock()
 	return sha256.Sum256(a[:])
 }
 
 // Print prints human readable description
-func (b *Block) Print() {
+func (b *block) Print() {
 	b.print()
 }
 
 // Print prints human readable description
-func (b *Block) print() {
+func (b *block) print() {
 	fmt.Printf("\n_____________________\n")
 	fmt.Printf("num %d\nData: %x \nNonce: %d \nPrevHash %x\ncorrect: %t \nDifficulty %d\nblockHash %x\nLocation %x", b.BlockCount, b.MerkleRoot, b.Nonce, b.PrevHash[:], b.Verify(), b.Difficulty, b.Hash(), &b)
 	fmt.Printf("_____________________\n")
 }
 
 // Verify checks whether hash is valid according to difficulty
-func (b *Block) Verify() bool {
+func (b *block) Verify() bool {
 	return compHash(b.Difficulty, b.Hash())
 }
 
@@ -73,8 +74,8 @@ func compHash(Difficulty uint32, hash [32]byte) bool {
 	return bytes.Equal(hash[0:Difficulty], zero[:])
 }
 
-func generateGenesis(difficulty uint32, m *Miner) *Block {
-	genesis := new(Block)
+func generateGenesis(difficulty uint32, m *Miner) *block {
+	genesis := new(block)
 	genesis.Nonce = 0
 	var h [32]byte
 	genesis.PrevHash = h
@@ -91,6 +92,6 @@ func generateGenesis(difficulty uint32, m *Miner) *Block {
 		genesis.Nonce++
 	}
 
-	GenesisBlock = genesis
+	genesisBlock = genesis
 	return genesis
 }
