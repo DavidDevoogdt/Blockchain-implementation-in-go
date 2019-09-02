@@ -5,10 +5,13 @@ import (
 	bc "project/pkg/blockchain"
 	"strconv"
 
+	"github.com/pkg/profile"
 	"gopkg.in/abiosoft/ishell.v2"
 )
 
 func main() {
+
+	defer profile.Start().Stop()
 
 	// ##################
 	shell := ishell.New()
@@ -173,6 +176,18 @@ func main() {
 			} else {
 				c.Printf("transaction of %.4f from %s to %s was unsuccesfull\n", amount, payer.Name, receiver.Name)
 			}
+
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "stop",
+		Help: "make a transaction",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
+
+			c.Stop()
 
 		},
 	})

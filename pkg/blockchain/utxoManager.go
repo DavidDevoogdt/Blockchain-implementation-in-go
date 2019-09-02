@@ -26,7 +26,7 @@ func initializeUTxOMananger(m *Miner) *uTxOManager {
 	utxo := new(uTxOManager)
 	utxo.utxOMap = make(map[[32]byte]map[uint8]map[uint8]bool)
 	utxo.Miner = m
-	utxo.attachedBlockChainNode = m.BlockChain.Root
+	utxo.attachedBlockChainNode = m.BlockChain.root
 	utxo.attachedBlockChainNode.hasData = false
 	utxo.attachedBlockChainNode.uTxOManagerIsUpToDate = true
 	return utxo
@@ -39,7 +39,7 @@ func (um *uTxOManager) verifyTransactionRef(tr *transactionRef) bool {
 	um.mapMutex.RUnlock()
 
 	if !ok {
-		um.Miner.DebugPrint(fmt.Sprintf("Transaction block has root not in chain, invalid transaction: %x - %d %d \n", tr.BlockHash, tr.TransactionBlockNumber, tr.OutputNumber))
+		um.Miner.debugPrint(fmt.Sprintf("Transaction block has root not in chain, invalid transaction: %x - %d %d \n", tr.BlockHash, tr.TransactionBlockNumber, tr.OutputNumber))
 		return false
 	}
 
@@ -57,7 +57,7 @@ func (um *uTxOManager) verifyTransactionRef(tr *transactionRef) bool {
 	um.thirdLayerMutexes[tr.OutputNumber].RUnlock()
 
 	if !ok3 {
-		um.Miner.DebugPrint(fmt.Sprintf("Transaction already spent or does not exist\n"))
+		um.Miner.debugPrint(fmt.Sprintf("Transaction already spent or does not exist\n"))
 		return false
 	}
 	return c // still could be false
@@ -111,24 +111,24 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	}
 
 	if tbg == nil {
-		_miner.DebugPrint(fmt.Sprintf("No data attached to block, not updating\n"))
+		_miner.debugPrint(fmt.Sprintf("No data attached to block, not updating\n"))
 		succeeded = false
 		return
 	}
 	if _prevBCN == nil {
-		_miner.DebugPrint(fmt.Sprintf("bcn has no pref blockchainnode, returning\n"))
+		_miner.debugPrint(fmt.Sprintf("bcn has no pref blockchainnode, returning\n"))
 		return false
 	}
 
 	if _prevBCN != _attachedBCN {
-		_miner.DebugPrint(fmt.Sprintf("updating with the wrong blockchainnode, not updating\n"))
+		_miner.debugPrint(fmt.Sprintf("updating with the wrong blockchainnode, not updating\n"))
 		return false
 	}
 
 	_prevBCN.generalMutex.RLock()
 
 	if !bcn.previousBlockChainNode.uTxOManagerIsUpToDate {
-		_miner.DebugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping \n"))
+		_miner.debugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping \n"))
 	}
 	_prevBCN.generalMutex.RUnlock()
 
@@ -147,7 +147,7 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 			um.mapMutex.RUnlock()
 
 			if !ok {
-				_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, hash block missing!, utxo corrupted\n"))
+				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, hash block missing!, utxo corrupted\n"))
 				succeeded = false
 			}
 
@@ -156,7 +156,7 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 			um.secondLayerMutexes[tr.TransactionBlockNumber].RUnlock()
 
 			if !ok2 {
-				_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, transaction block missing!, utxo corrupted\n"))
+				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, transaction block missing!, utxo corrupted\n"))
 				succeeded = false
 			}
 
@@ -165,7 +165,7 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 			um.thirdLayerMutexes[tr.OutputNumber].RUnlock()
 
 			if !ok3 {
-				_miner.DebugPrint(fmt.Sprintf("UTxO was not in sync, transaction output missing!, utxo corrupted\n"))
+				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, transaction output missing!, utxo corrupted\n"))
 				succeeded = false
 			}
 
@@ -217,7 +217,7 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	waitGroup.Wait()
 
 	if !succeeded {
-		_miner.DebugPrint(fmt.Sprintf("Some record could not be correctly updated in the map, probably missing\n"))
+		_miner.debugPrint(fmt.Sprintf("Some record could not be correctly updated in the map, probably missing\n"))
 		return
 	}
 

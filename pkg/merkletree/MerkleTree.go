@@ -193,7 +193,7 @@ func (mt *MerkleTree) GenerareteMerkleProof(elementNum uint8) *ProofStruct {
 
 	ps.proofArray = make([]byte, 32*int(ps.proofSize))
 	k := ps.applicationOrder
-	fmt.Printf("%.8b", k)
+	//fmt.Printf("%.8b", k)
 
 	for i := 0; i <= int(ps.proofSize-1); i++ {
 		layerIndex := int(ps.proofSize) - i

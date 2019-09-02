@@ -34,7 +34,7 @@ type Miner struct {
 	receiveChannels     map[[32]byte]chan bool
 	receiveChannelMutex sync.Mutex
 
-	tp *TransactionPool
+	tp *transactionPool
 }
 
 //###################one time init###################
@@ -54,8 +54,8 @@ func CreateMiner(name string, Broadcaster *Broadcaster, blockChain [][blockSize]
 	m.interrupt = make(chan bool)
 	m.debug = false
 	m.receivedData = make(map[[32]byte]bool)
-	m.BlockChain.Root.uTxOManagerPointer = initializeUTxOMananger(m)
-	m.BlockChain.Root.uTxOManagerIsUpToDate = true
+	m.BlockChain.root.uTxOManagerPointer = initializeUTxOMananger(m)
+	m.BlockChain.root.uTxOManagerIsUpToDate = true
 	m.tp = m.initializeTransactionPool()
 
 	go m.receiveNetwork()
@@ -71,8 +71,8 @@ func MinerFromScratch(name string, broadcaster *Broadcaster) *Miner {
 	return m
 }
 
-// CreateGenesisMiner called from other place, difficult circular dependencies for first miner
-func CreateGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *BlockChain) *Miner {
+// createGenesisMiner called from other place, difficult circular dependencies for first miner
+func createGenesisMiner(name string, Broadcaster *Broadcaster, blockChain *BlockChain) *Miner {
 
 	m := new(Miner)
 	m.Name = name
@@ -137,24 +137,24 @@ func (m *Miner) MineContiniously() {
 			blc := m.mineBlock(prepBlock)
 			//print(blc)
 			if blc == nil {
-				m.DebugPrint(fmt.Sprintf("%s was not fast enough \n", m.Name))
+				m.debugPrint(fmt.Sprintf("%s was not fast enough \n", m.Name))
 			} else {
-				m.DebugPrint(fmt.Sprintf("%s mined block: \n", m.Name))
+				m.debugPrint(fmt.Sprintf("%s mined block: \n", m.Name))
 				m.BlockChain.addInternal(blc, tbg)
 
 				m.broadcastBlock(blc)
 			}
 
 		} else {
-			m.DebugPrint("Block nil, somthing went wrong with preparation of it\n")
+			m.debugPrint("Block nil, somthing went wrong with preparation of it\n")
 		}
 	}
 }
 
 //###############representation#####################
 
-//DebugPrint print if debug is on
-func (m *Miner) DebugPrint(msg string) {
+//debugPrint print if debug is on
+func (m *Miner) debugPrint(msg string) {
 	if m != nil {
 
 		m.generalMutex.Lock()
@@ -207,8 +207,8 @@ func (m *Miner) send(sendType uint8, data []byte, sender [rsautil.KeySize]byte, 
 	a := ss.SerializeSendStruct()
 
 	b.lookupMutex.Lock()
-	rc, ok := b.Lookup[receiver]
-	sd, _ := b.Lookup[sender]
+	rc, ok := b.lookup[receiver]
+	sd, _ := b.lookup[sender]
 	b.lookupMutex.Unlock()
 
 	h := ss.confirmationHash()
@@ -304,7 +304,7 @@ func (m *Miner) receiveNetwork() {
 				m.receivedDataMutex.Unlock()
 
 				if !ok {
-					val, ok2 := m.broadcaster.Lookup[cs.sender]
+					val, ok2 := m.broadcaster.lookup[cs.sender]
 					if ok2 {
 						val <- serializeNetworkMessage(networkTypes["ConfirmationAccept"], cs.response[:])
 					}

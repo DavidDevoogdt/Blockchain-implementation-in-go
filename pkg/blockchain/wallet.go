@@ -58,7 +58,7 @@ func (w *Wallet) TotalUnspent() uint64 {
 	head.generalMutex.RUnlock()
 
 	if !uptodate {
-		w.Miner.DebugPrint("head utxo not up to date, could not get amount. Implement this\n")
+		w.Miner.debugPrint("head utxo not up to date, could not get amount. Implement this\n")
 		return uint64(0)
 	}
 

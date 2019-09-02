@@ -161,7 +161,7 @@ func deserializeConfirmationStruct(a []byte) *confirmationStruct {
 // Broadcaster groups subscribed miners
 type Broadcaster struct {
 	lookupMutex          sync.Mutex
-	Lookup               map[[rsautil.KeySize]byte]chan []byte
+	lookup               map[[rsautil.KeySize]byte]chan []byte
 	networkChannels      []chan []byte
 	networkChannelsMutex sync.RWMutex
 	Name                 string
@@ -175,7 +175,7 @@ func NewBroadcaster(name string) *Broadcaster {
 	bc.Count = 0
 	bc.networkChannels = make([]chan []byte, 0)
 
-	bc.Lookup = make(map[[rsautil.KeySize]byte]chan []byte)
+	bc.lookup = make(map[[rsautil.KeySize]byte]chan []byte)
 
 	return bc
 }
@@ -185,7 +185,7 @@ func (b *Broadcaster) append(network chan []byte, address [rsautil.KeySize]byte)
 	b.networkChannels = append(b.networkChannels, network)
 	b.networkChannelsMutex.Unlock()
 	b.lookupMutex.Lock()
-	b.Lookup[address] = network
+	b.lookup[address] = network
 	b.lookupMutex.Unlock()
 	b.Count++
 }

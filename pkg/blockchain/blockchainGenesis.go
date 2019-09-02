@@ -12,11 +12,11 @@ func BlockChainGenesis(name string, difficulty uint32, broadcaster *Broadcaster)
 	bc.otherHeadNodes = make(map[[32]byte]*BlockChainNode)
 	bc.orphanBlockChains = make([]*BlockChain, 0)
 	bc.isOrphan = false
-	bc.Root = bl
+	bc.root = bl
 
 	bc.utxoChan = make(chan *BlockChainNode)
 
-	genesisMiner := CreateGenesisMiner(name, broadcaster, bc)
+	genesisMiner := createGenesisMiner(name, broadcaster, bc)
 	bc.Miner = genesisMiner
 	gen := generateGenesis(difficulty, genesisMiner)
 	bl.Block = gen

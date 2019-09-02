@@ -8,17 +8,17 @@ import (
 	"sync"
 )
 
-// TransactionPool is Datatype that keeps track of al the requested transaction and generates a transactionblockgroup for the miner
-type TransactionPool struct {
-	Miner *Miner
+// transactionPool is Datatype that keeps track of al the requested transaction and generates a transactionblockgroup for the miner
+type transactionPool struct {
+	miner *Miner
 
 	incomingMutex    sync.RWMutex
 	numberIncoming   uint16
-	IncomingRequests map[[32]byte]*transactionBlock
+	incomingRequests map[[32]byte]*transactionBlock
 
 	signatureVerifiedMutex   sync.RWMutex
 	numberSignatureVerified  uint16
-	SignatureVerifiedRequest map[[32]byte]*transactionBlock
+	signatureVerifiedRequest map[[32]byte]*transactionBlock
 
 	priorityMutex   sync.RWMutex
 	numberPriority  uint16
@@ -31,7 +31,7 @@ type TransactionPool struct {
 
 //updateWithBlockchainNode checks whether some transactionrequest refer to this block
 //also remove psent transactions
-func (tp *TransactionPool) updateWithBlockchainNode(bcn *BlockChainNode) {
+func (tp *transactionPool) updateWithBlockchainNode(bcn *BlockChainNode) {
 	bcn.generalMutex.Lock()
 	bcn.knownToTransactionPool = true
 	_prevBCN := bcn.previousBlockChainNode
@@ -50,23 +50,23 @@ func (tp *TransactionPool) updateWithBlockchainNode(bcn *BlockChainNode) {
 	bcn.generalMutex.Unlock()
 
 	if dp == nil {
-		tp.Miner.DebugPrint("tp updating but no data, error\n")
+		tp.miner.debugPrint("tp updating but no data, error\n")
 		return
 	}
 
 	for _, bl := range dp.TransactionBlockStructs {
 		h := bl.hash()
 		tp.signatureVerifiedMutex.Lock()
-		if _, ok := tp.SignatureVerifiedRequest[h]; ok {
-			delete(tp.SignatureVerifiedRequest, h)
-			tp.Miner.DebugPrint(fmt.Sprintf("%s removed transaction from pool because it is spent\n", tp.Miner.Name))
+		if _, ok := tp.signatureVerifiedRequest[h]; ok {
+			delete(tp.signatureVerifiedRequest, h)
+			tp.miner.debugPrint(fmt.Sprintf("%s removed transaction from pool because it is spent\n", tp.miner.Name))
 		}
 		tp.signatureVerifiedMutex.Unlock()
 
 		tp.priorityMutex.Lock()
 		if _, ok := tp.priorityRequest[h]; ok {
 			delete(tp.priorityRequest, h)
-			tp.Miner.DebugPrint(fmt.Sprintf("%s removed priority transaction from pool because it is spent\n", tp.Miner.Name))
+			tp.miner.debugPrint(fmt.Sprintf("%s removed priority transaction from pool because it is spent\n", tp.miner.Name))
 		}
 		tp.priorityMutex.Unlock()
 
@@ -76,44 +76,44 @@ func (tp *TransactionPool) updateWithBlockchainNode(bcn *BlockChainNode) {
 }
 
 //initializeTransactionPool needs to be called once for initialization of the data structure
-func (m *Miner) initializeTransactionPool() *TransactionPool {
-	tp := new(TransactionPool)
-	tp.IncomingRequests = make(map[[32]byte]*transactionBlock, 0)
-	tp.SignatureVerifiedRequest = make(map[[32]byte]*transactionBlock, 0)
+func (m *Miner) initializeTransactionPool() *transactionPool {
+	tp := new(transactionPool)
+	tp.incomingRequests = make(map[[32]byte]*transactionBlock, 0)
+	tp.signatureVerifiedRequest = make(map[[32]byte]*transactionBlock, 0)
 	tp.priorityRequest = make(map[[32]byte]*transactionBlock, 0)
 	tp.recieveChannel = make(chan []byte)
-	tp.Miner = m
+	tp.miner = m
 	go tp.receiveTransactionBlock()
 
 	return tp
 }
 
 // receiveTransactionBlock verifies and adds a tx to the pool of blocks for the next transactionblockgroup
-func (tp *TransactionPool) receiveTransactionBlock() {
+func (tp *transactionPool) receiveTransactionBlock() {
 	for {
 		tbArr := <-tp.recieveChannel
 		//todo at the time only complete good blocks according to current blockchain status get into the signatureverifiedpool
 		go func() {
-			tb := deserializeTransactionBlock(tbArr, tp.Miner.BlockChain)
+			tb := deserializeTransactionBlock(tbArr, tp.miner.BlockChain)
 			if tb.NumberOfUnresolvedReferences != uint8(0) {
-				tp.Miner.DebugPrint(fmt.Sprintf("todo complete references or reject block\n"))
+				tp.miner.debugPrint(fmt.Sprintf("todo complete references or reject block\n"))
 			}
 			good := tb.verifyExceptUTXO(false)
 			if good {
 				tp.signatureVerifiedMutex.Lock()
 				tp.numberSignatureVerified++
-				tp.SignatureVerifiedRequest[tb.hash()] = tb
+				tp.signatureVerifiedRequest[tb.hash()] = tb
 				tp.signatureVerifiedMutex.Unlock()
-				tp.Miner.DebugPrint(fmt.Sprintf("%s added extra transaction to pool\n", tp.Miner.Name))
+				tp.miner.debugPrint(fmt.Sprintf("%s added extra transaction to pool\n", tp.miner.Name))
 			} else {
-				tp.Miner.DebugPrint(fmt.Sprintf("block had bad utxo ref\n"))
+				tp.miner.debugPrint(fmt.Sprintf("block had bad utxo ref\n"))
 			}
 		}()
 	}
 }
 
 // receiveInternal skips all checks
-func (tp *TransactionPool) receiveInternal(tb *transactionBlock) {
+func (tp *transactionPool) receiveInternal(tb *transactionBlock) {
 	tp.priorityMutex.Lock()
 	tp.numberPriority++
 	tp.priorityRequest[tb.hash()] = tb
@@ -121,7 +121,7 @@ func (tp *TransactionPool) receiveInternal(tb *transactionBlock) {
 }
 
 // generateTransctionBlockGroup makes a fee block and adds the blocks in the pool to a full transactionblockgroup
-func (tp *TransactionPool) generateTransctionBlockGroup() *transactionBlockGroup {
+func (tp *transactionPool) generateTransctionBlockGroup() *transactionBlockGroup {
 
 	//m := tp.miner
 
@@ -130,7 +130,7 @@ func (tp *TransactionPool) generateTransctionBlockGroup() *transactionBlockGroup
 
 	tbg.Add(feeblock)
 
-	bc := tp.Miner.BlockChain
+	bc := tp.miner.BlockChain
 
 	bc.blockChainMutex.Lock()
 	head := bc.head
@@ -141,7 +141,7 @@ func (tp *TransactionPool) generateTransctionBlockGroup() *transactionBlockGroup
 	head.generalMutex.RUnlock()
 
 	if utxo == nil {
-		tp.Miner.DebugPrint(fmt.Sprintf("todo implement non up to date head\n"))
+		tp.miner.debugPrint(fmt.Sprintf("todo implement non up to date head\n"))
 		return nil
 	}
 
@@ -152,13 +152,13 @@ func (tp *TransactionPool) generateTransctionBlockGroup() *transactionBlockGroup
 	tp.priorityMutex.RUnlock()
 
 	tp.signatureVerifiedMutex.RLock()
-	for _, vr := range tp.SignatureVerifiedRequest {
+	for _, vr := range tp.signatureVerifiedRequest {
 
 		if utxo.VerifyTransactionBlockRefs(vr) {
-			tp.Miner.DebugPrint(fmt.Sprintf("%s added extra transaction to tbg\n", tp.Miner.Name))
+			tp.miner.debugPrint(fmt.Sprintf("%s added extra transaction to tbg\n", tp.miner.Name))
 			tbg.Add(vr)
 		} else {
-			tp.Miner.DebugPrint("block is transactionpool is bad\n")
+			tp.miner.debugPrint("block is transactionpool is bad\n")
 		}
 
 	}
@@ -170,8 +170,8 @@ func (tp *TransactionPool) generateTransctionBlockGroup() *transactionBlockGroup
 }
 
 // generateFeeBlock sets up a fee transaction according to the rules
-func (tp *TransactionPool) generateFeeBlock() *transactionBlock {
-	m := tp.Miner
+func (tp *transactionPool) generateFeeBlock() *transactionBlock {
+	m := tp.miner
 	tp.i++
 	tb := initializeTransactionBlock()
 	copy(tb.PayerPublicKey[0:rsautil.KeySize], m.Wallet.PublicKey[0:rsautil.KeySize])
@@ -188,14 +188,14 @@ func (tp *TransactionPool) generateFeeBlock() *transactionBlock {
 }
 
 // prepareBlockForMining takes transactiondata and builds a block suitable for mining
-func (tp *TransactionPool) prepareBlockForMining(tbg *transactionBlockGroup) *block {
+func (tp *transactionPool) prepareBlockForMining(tbg *transactionBlockGroup) *block {
 	if tbg == nil {
 		return nil
 	}
 
-	m := tp.Miner
+	m := tp.miner
 
-	m.DebugPrint(" started preparing tbg for mining\n")
+	m.debugPrint(" started preparing tbg for mining\n")
 
 	m.generalMutex.Lock()
 	bc := m.BlockChain
