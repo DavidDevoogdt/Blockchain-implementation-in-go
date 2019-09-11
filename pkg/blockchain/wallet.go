@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"fmt"
+	"log"
 	rsautil "project/pkg/rsa_util"
 
 	"github.com/sasha-s/go-deadlock"
 )
 
-// Davidcoin is the smallelt currency: 1e18 davidacoin = 1 coin
-const Davidcoin = 1e18
+// Davidcoin is the smallelt currency: 1e9 davidacoin = 1 coin
+const Davidcoin = 1e9
 
 // Wallet keeps track of own money
 type Wallet struct {
@@ -43,8 +44,8 @@ func (m *Miner) initializeWallet() *Wallet {
 	return w
 }
 
-// TotalUnspent checks all transactionrefs against the utxo manager of the head
-func (w *Wallet) TotalUnspent() uint64 {
+// TotalAvailable checks all transactionrefs against the utxo manager of the head. If unspent argument is true, the money for transaction being vallidated is not count
+func (w *Wallet) TotalAvailable() uint64 {
 	amount := uint64(0)
 
 	bc := w.Miner.BlockChain
@@ -64,12 +65,18 @@ func (w *Wallet) TotalUnspent() uint64 {
 
 	w.RLock()
 	for _, bl := range w.transactions {
-		for _, outp := range bl.tb.OutputList {
-			if bytes.Equal(outp.ReceiverPublicKey[0:rsautil.KeySize], w.PublicKey[0:rsautil.KeySize]) {
-				if utxoptr.verifyTransactionRef(bl.tr) {
-					amount += outp.Amount
-				}
-			}
+		outp := bl.tb.OutputList[bl.tr.OutputNumber]
+
+		check := bytes.Equal(outp.ReceiverPublicKey[0:rsautil.KeySize], w.PublicKey[0:rsautil.KeySize])
+		if !check {
+			log.Fatal("wallet contains transaction output for other miner\n")
+		}
+
+		goodTrans := utxoptr.verifyTransactionRef(bl.tr)
+		if goodTrans {
+
+			amount += outp.Amount
+
 		}
 	}
 	w.RUnlock()
@@ -102,21 +109,19 @@ func (w *Wallet) MakeTransaction(Receiver [rsautil.KeySize]byte, msg string, amo
 	}
 	w.RLock()
 	for _, bl := range w.transactions {
+		to := bl.tb.OutputList[bl.tr.OutputNumber]
 
-		for _, outp := range bl.tb.OutputList {
-			to := outp
-			if utxoptr.verifyTransactionRef(bl.tr) {
-				ti := new(transactionInput)
-				ti.reference = bl.tr
-				ti.OutputBlock = to
-				ti.sign(w.privateKey)
-				tx.addInput(ti)
-				currentAmount += to.Amount
+		goodtrans := utxoptr.verifyTransactionRef(bl.tr)
+		if goodtrans {
+			ti := new(transactionInput)
+			ti.reference = bl.tr
+			ti.OutputBlock = to
+			ti.sign(w.privateKey)
+			tx.addInput(ti)
+			currentAmount += to.Amount
 
-				if currentAmount >= to.Amount {
-					break
-				}
-
+			if currentAmount >= amount {
+				break
 			}
 
 		}
@@ -125,8 +130,8 @@ func (w *Wallet) MakeTransaction(Receiver [rsautil.KeySize]byte, msg string, amo
 	w.RUnlock()
 
 	if currentAmount < amount {
-		//w.Miner.DebugPrint("Not Enough money to make payment, aborting\n")
-		fmt.Printf("Not Enough money to make payment, aborting\n")
+		w.Miner.debugPrint("Not Enough money to make payment, aborting\n")
+		//fmt.Printf("Not Enough money to make payment, aborting\n")
 		return false
 	}
 
@@ -161,7 +166,7 @@ func (w *Wallet) MakeTransaction(Receiver [rsautil.KeySize]byte, msg string, amo
 		w.Miner.tp.receiveInternal(tx)
 	}
 	//w.Miner.DebugPrint("Made transaction\n")
-	fmt.Printf("Made transaction\n")
+	w.Miner.debugPrint(fmt.Sprintf("Made transaction amount = %.4f \n", float64(amount)/Davidcoin))
 
 	return true
 }
@@ -197,5 +202,5 @@ func (w *Wallet) updateWithBlock(bcn *BlockChainNode) {
 
 //Print prints current cash status
 func (w *Wallet) Print() {
-	fmt.Printf("%s has %.3f davidcoin\n", w.Miner.Name, float64(w.TotalUnspent())/Davidcoin)
+	fmt.Printf("%s has %.3f davidcoin\n", w.Miner.Name, float64(w.TotalAvailable())/Davidcoin)
 }

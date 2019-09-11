@@ -66,11 +66,21 @@ func (um *uTxOManager) verifyTransactionRef(tr *transactionRef) bool {
 // VerifyTransactionBlockRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
 func (um *uTxOManager) VerifyTransactionBlockRefs(tb *transactionBlock) bool {
 
-	for _, b := range tb.InputList[:] {
+	hashmapInputs := make(map[[transactionRefSize]byte]bool)
 
+	for _, b := range tb.InputList[:] {
+		key := b.reference.SerializeTransactionRef()
+		_, nok := hashmapInputs[key]
+
+		if nok {
+			um.Miner.debugPrint("verified block has same referenced output in different blocks")
+			return false // same input referenced twice between different blocks
+		}
 		if !um.verifyTransactionRef(b.reference) {
 			return false
 		}
+
+		hashmapInputs[key] = true
 	}
 
 	return true
@@ -79,20 +89,32 @@ func (um *uTxOManager) VerifyTransactionBlockRefs(tb *transactionBlock) bool {
 // verifyTransactionBlockGroupRefs only checks whether or not the transactions in the inputlist are spendable, not the signature and such
 func (um *uTxOManager) verifyTransactionBlockGroupRefs(tbg *transactionBlockGroup) bool {
 
+	hashmapInputs := make(map[[transactionRefSize]byte]bool)
+
 	for _, tb := range tbg.TransactionBlockStructs {
 		for _, b := range tb.InputList[:] {
+			key := b.reference.SerializeTransactionRef()
+			_, nok := hashmapInputs[key]
+
+			if nok {
+				um.Miner.debugPrint("verified group has same referenced output in different blocks")
+				return false // same input referenced twice between different blocks
+			}
 
 			if !um.verifyTransactionRef(b.reference) {
 				return false
 			}
+
+			hashmapInputs[key] = true
+
 		}
 	}
 	return true
 }
 
 // updateWithNextBlockChainNode adds new data to map. Deepcopy preserves map to previous block
-func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCopy bool) (succeeded bool) {
-	succeeded = true
+func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCopy bool) (err error) {
+	err = nil
 
 	bcn.generalMutex.RLock()
 	_prevBCN := bcn.previousBlockChainNode
@@ -112,25 +134,32 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 	if tbg == nil {
 		_miner.debugPrint(fmt.Sprintf("No data attached to block, not updating\n"))
-		succeeded = false
-		return
+		err = fmt.Errorf("no data attached to block, not updating")
+		return err
 	}
 	if _prevBCN == nil {
 		_miner.debugPrint(fmt.Sprintf("bcn has no pref blockchainnode, returning\n"))
-		return false
+		err = fmt.Errorf("bcn has no pref blockchainnode, returning")
+		return err
 	}
 
 	if _prevBCN != _attachedBCN {
 		_miner.debugPrint(fmt.Sprintf("updating with the wrong blockchainnode, not updating\n"))
-		return false
+		err = fmt.Errorf("updating with the wrong blockchainnode, not updating")
+		return err
 	}
 
 	_prevBCN.generalMutex.RLock()
+	uptd := bcn.previousBlockChainNode.uTxOManagerIsUpToDate
 
-	if !bcn.previousBlockChainNode.uTxOManagerIsUpToDate {
-		_miner.debugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping \n"))
-	}
 	_prevBCN.generalMutex.RUnlock()
+
+	if !uptd {
+		_miner.debugPrint(fmt.Sprintf("Previous utxo manager was not up to date, stopping \n"))
+
+		err = fmt.Errorf("")
+		return err
+	}
 
 	var waitGroup sync.WaitGroup
 
@@ -148,7 +177,8 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 			if !ok {
 				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, hash block missing!, utxo corrupted\n"))
-				succeeded = false
+				err = fmt.Errorf("UTxO was not in sync, hash block missing!, utxo corrupted")
+				return err
 			}
 
 			um.secondLayerMutexes[tr.TransactionBlockNumber].RLock()
@@ -157,20 +187,28 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 			if !ok2 {
 				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, transaction block missing!, utxo corrupted\n"))
-				succeeded = false
+				err = fmt.Errorf("utxO was not in sync, transaction block missing!, utxo corrupted")
+				return err
 			}
 
 			um.thirdLayerMutexes[tr.OutputNumber].RLock()
-			_, ok3 := b[tr.OutputNumber]
+			val, ok3 := b[tr.OutputNumber]
 			um.thirdLayerMutexes[tr.OutputNumber].RUnlock()
 
 			if !ok3 {
 				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, transaction output missing!, utxo corrupted\n"))
-				succeeded = false
+				err = fmt.Errorf("utxO was not in sync, transaction output missing!, utxo corrupted")
+				return err
+			}
+
+			if !val {
+				_miner.debugPrint(fmt.Sprintf("UTxO was not in sync, transaction was removed bofore!, utxo corrupted\n"))
+				err = fmt.Errorf("utxO was not in sync, transaction was removed bofore!, utxo corrupted")
+				return err
 			}
 
 			um.thirdLayerMutexes[tr.OutputNumber].Lock()
-			delete(b, tr.OutputNumber)
+			b[tr.OutputNumber] = false
 			um.thirdLayerMutexes[tr.OutputNumber].Unlock()
 
 			waitGroup.Done()
@@ -216,11 +254,6 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 
 	waitGroup.Wait()
 
-	if !succeeded {
-		_miner.debugPrint(fmt.Sprintf("Some record could not be correctly updated in the map, probably missing\n"))
-		return
-	}
-
 	um.umMutex.Lock()
 	um.attachedBlockChainNode = bcn
 	_attachedBCN = bcn
@@ -243,7 +276,7 @@ func (um *uTxOManager) updateWithNextBlockChainNode(bcn *BlockChainNode, deepCop
 	_attachedBCN.uTxOManagerPointer = um
 	_attachedBCN.generalMutex.Unlock()
 
-	return true
+	return err
 }
 
 // Deepcopy generates exact copy at different memory location

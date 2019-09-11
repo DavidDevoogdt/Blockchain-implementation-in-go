@@ -366,6 +366,8 @@ type transactionBlockGroup struct {
 	merkleTree              *merkletree.MerkleTree
 	finalized               bool
 	Height                  uint16
+
+	inputRefsMap map[[transactionRefSize]byte]bool
 }
 
 //VerifyExceptUTXO checks for every transaction wheter the transaction is ok. It is not checked her whether or not the transaction is already spent with the utxo manager
@@ -443,21 +445,40 @@ func initializeTransactionBlockGroup() *transactionBlockGroup {
 	tbg.lengths = make([]uint16, 0)
 	tbg.transactionBlocks = make([][]byte, 0)
 	tbg.merkleTree = merkletree.InitializeMerkleTree()
+	tbg.inputRefsMap = make(map[[transactionRefSize]byte]bool)
 	return tbg
 }
 
 //Add adds an element to the group
-func (tbg *transactionBlockGroup) Add(tb *transactionBlock) {
+func (tbg *transactionBlockGroup) Add(tb *transactionBlock) bool {
 	if !tbg.finalized {
+
+		keylist := make([][transactionRefSize]byte, tb.InputNumber)
+
+		for i, b := range tb.InputList {
+			key := b.reference.SerializeTransactionRef()
+			keylist[i] = key
+			if _, nok := tbg.inputRefsMap[key]; nok {
+				return false
+			}
+		}
+
+		for _, key := range keylist {
+			tbg.inputRefsMap[key] = true
+		}
+
 		stb := tb.serializeTransactionBlock()
 		tbg.size++
 		tbg.lengths = append(tbg.lengths, uint16(len(stb)))
 		tbg.transactionBlocks = append(tbg.transactionBlocks, stb)
 		tbg.merkleTree.Add(&stb)
 		tbg.TransactionBlockStructs = append(tbg.TransactionBlockStructs, tb)
-	} else {
-		fmt.Printf("Cannot add to finalized tree, aborting")
+
+		return true
 	}
+
+	//fmt.Printf("Cannot add to finalized tree, aborting")
+	return false
 
 }
 

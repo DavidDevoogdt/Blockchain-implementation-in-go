@@ -381,7 +381,7 @@ func (bc *BlockChain) utxoUpdater() {
 }
 
 // verifyAndBuildDown request data if necesarry, builds utxo manager from bottum up from last know good state, redirects the upwards links an stores savepoints
-func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
+func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) error {
 
 	bcn.generalMutex.RLock()
 	_prevBCN := bcn.previousBlockChainNode
@@ -404,12 +404,12 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 
 	if bcIsOrphan {
 		bc.Miner.debugPrint("orphans cannot build utxo, returning\n")
-		return
+		return fmt.Errorf("orphans cannot build utxo, returning")
 	}
 
 	if bcnUTxOManagerIsUpToDate {
-		bcMiner.debugPrint("txo manager already up to date\n")
-		return
+		bcMiner.debugPrint("utxo manager already up to date\n")
+		return nil
 	}
 
 	var waitingfordata = false
@@ -446,7 +446,10 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 	if !prevUTxOUptodate {
 		bc.Miner.debugPrint(fmt.Sprintf("also updating previous block %d \n", prevblockcount))
 		//make sure all locks are released
-		bc.verifyAndBuildDown(_prevBCN)
+		err := bc.verifyAndBuildDown(_prevBCN)
+		if err != nil {
+			return err
+		}
 
 	} //by the time this ends, all previous blocks are updated
 
@@ -470,11 +473,15 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 	if !goodTransactions {
 		bcn.badblock = true
 		bcMiner.debugPrint("found bad block, transactions not matchin\n")
+		bcn.generalMutex.Unlock()
+		return fmt.Errorf("found bad block, transactions not matchin")
 	}
 
 	if !goodSignatures { // todo check previous blocks!
 		bcn.badblock = true
 		bcMiner.debugPrint("False signatures, not continuing\n")
+		bcn.generalMutex.Unlock()
+		return fmt.Errorf("false signatures, not continuing")
 	}
 
 	bcn.verifiedWithUtxoManager = true
@@ -510,16 +517,17 @@ func (bc *BlockChain) verifyAndBuildDown(bcn *BlockChainNode) {
 
 	keepCopy := _newHeight%5 == 1
 
-	succes := prevUTXO.updateWithNextBlockChainNode(bcn, keepCopy)
-	if !succes {
-		log.Fatal(fmt.Sprintf("updating utxoManager Failed, should not happen! %s\n", bc.Miner.Name))
-		return
+	err := prevUTXO.updateWithNextBlockChainNode(bcn, keepCopy)
+	if err != nil {
+		log.Fatal(err)
+		return err
 	}
 
 	bcMiner.debugPrint(fmt.Sprintf("Utxomanager is now at %d, kept copy = %t\n", bcn.Block.BlockCount, keepCopy))
 	bc.Miner.Wallet.updateWithBlock(bcn)
 	bc.Miner.tp.updateWithBlockchainNode(bcn)
 
+	return nil //nil error
 }
 
 //###############initalizationcode
