@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	bc "project/pkg/blockchain"
 	"strconv"
+	"sync"
 
-	"github.com/pkg/profile"
 	"gopkg.in/abiosoft/ishell.v2"
 )
 
 func main() {
 
-	defer profile.Start().Stop()
+	//defer profile.Start().Stop()
 
 	// ##################
 	shell := ishell.New()
@@ -144,14 +145,14 @@ func main() {
 			var am uint64
 
 			for _, m := range Miners {
-				k := m.Wallet.TotalUnspent()
-				c.Printf("%s has %.4f\n", m.Name, float64(k)/1e18)
+				k := m.Wallet.TotalAvailable()
+				c.Printf("%s has %.4f\n", m.Name, float64(k)/bc.Davidcoin)
 				am += k
 			}
 
 			n := Miners[0].BlockChain.GetHead().GetBlockNum()
 
-			fmt.Printf("totalBlocks: %d, total money: %.4f", n, float64(am)/1e18)
+			c.Printf("totalBlocks: %d, total money: %.4f\n", n, float64(am)/bc.Davidcoin)
 
 		},
 	})
@@ -170,12 +171,51 @@ func main() {
 			shell.Print("message for transaction: ")
 			msg := shell.ReadLine()
 
-			ret := payer.Wallet.MakeTransaction(receiver.Wallet.PublicKey, msg, uint64(amount*1e18))
+			ret := payer.Wallet.MakeTransaction(receiver.Wallet.PublicKey, msg, uint64(amount*bc.Davidcoin))
 			if ret {
 				c.Printf("transaction of %.4f from %s to %s was succesfull\n", amount, payer.Name, receiver.Name)
 			} else {
 				c.Printf("transaction of %.4f from %s to %s was unsuccesfull\n", amount, payer.Name, receiver.Name)
 			}
+
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "MakeRandomTransactions",
+		Help: "make a transaction",
+		Func: func(c *ishell.Context) {
+			c.ShowPrompt(false)
+			defer c.ShowPrompt(true)
+
+			c.Printf("number of transactions to make")
+			numberOfTransactions, _ := strconv.Atoi(c.ReadLine())
+
+			payers := c.Checklist(MinerNames, "Chose Payers:", nil)
+			receivers := c.Checklist(MinerNames, "Chose receivers:", nil)
+
+			var wg sync.WaitGroup
+			wg.Add(numberOfTransactions)
+
+			for i := 0; i < numberOfTransactions; i++ {
+				go func() {
+					rand1 := rand.Intn(len(payers))
+					rand2 := rand.Intn(len(receivers))
+					rand3 := rand.Float64()
+
+					m1 := Miners[payers[rand1]]
+					m2 := Miners[receivers[rand2]]
+
+					am := uint64(rand3 * float64(m1.Wallet.TotalAvailable()))
+
+					m1.Wallet.MakeTransaction(m2.Wallet.PublicKey, "rand trans", am)
+					c.Printf("transaferring %.4f from %s to %s\n", am, m1.Name, m2.Name)
+
+					wg.Done()
+				}()
+			}
+
+			wg.Wait()
 
 		},
 	})
